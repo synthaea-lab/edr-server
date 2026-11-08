@@ -341,7 +341,11 @@ export type StoredDetectionPayload = {
   timestamp: Date;
   technique: string;
   severity: z.infer<typeof SeveritySchema>;
+  // `any`, not `unknown`: these go into Prisma `Json` columns, and the bounded event tree is still
+  // typed `unknown` (it is parsed JSON, so storable). Typing it as Prisma JSON is tracked in #25.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   event: Record<string, any>;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   meta: Record<string, any>;
 };
 

@@ -68,8 +68,8 @@ export async function GET(req: NextRequest) {
     let fileBuffer: Buffer;
     try {
       fileBuffer = await fs.readFile(path.join(process.cwd(), "storage", "artifacts", entry.sha256));
-    } catch (error: any) {
-      if (error.code === "ENOENT") {
+    } catch (error) {
+      if ((error as { code?: string }).code === "ENOENT") {
         return NextResponse.json({ error: "Artifact not found" }, { status: 404 });
       }
       throw error;

@@ -135,7 +135,7 @@ export default async function HuntPage({ params }: { params: { id: string } }) {
       )}
       <p className="mt-3 text-xs text-gray-500">
         The newest {HUNT_RUNS_KEPT} runs are kept. A run that never finished (the server stopped
-        while it ran) stays in the list as "Did not finish".
+        while it ran) stays in the list as &quot;Did not finish&quot;.
       </p>
     </div>
   );

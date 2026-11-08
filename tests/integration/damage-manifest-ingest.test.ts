@@ -20,14 +20,17 @@ const FIXTURES = siblingPath("agent", "crates/schema/tests/fixtures");
 const SECRET = "test-proxy-secret";
 
 /** The newest schema version's fixtures: the version moves, the shapes are the point. */
-function fixture(name: string): Record<string, any> {
+/** A schema fixture: a JSON object whose `meta` block the tests rewrite. */
+type Fixture = Record<string, unknown> & { meta: Record<string, unknown> };
+
+function fixture(name: string): Fixture {
   const versions = readdirSync(FIXTURES)
     .filter((d) => /^v\d+$/.test(d) && existsSync(path.join(FIXTURES, d, name)))
     .sort((a, b) => Number(b.slice(1)) - Number(a.slice(1)));
   return JSON.parse(readFileSync(path.join(FIXTURES, versions[0], name), "utf8"));
 }
 
-function rename(base: Record<string, any>, from: string, to: string, ns: number) {
+function rename(base: Fixture, from: string, to: string, ns: number) {
   return { ...base, meta: { ...base.meta, timestamp_ns: ns }, old_path: from, new_path: to };
 }
 
@@ -68,8 +71,8 @@ describe.skipIf(!hasSibling("agent", "crates/schema/tests/fixtures"))("damage ma
 
     const stored = await prisma.detection.findFirstOrThrow({ where: { agentId: agent.id } });
     expect(stored.technique).toBe("T1486");
-    expect((stored.event as any).new_path).toBe("/home/user/c.docx.locked");
-    expect((stored.meta as any).additional_events).toHaveLength(2);
+    expect((stored.event as { new_path?: string }).new_path).toBe("/home/user/c.docx.locked");
+    expect((stored.meta as { additional_events?: unknown[] }).additional_events).toHaveLength(2);
 
     const incident = await createTestCase(tenant.id, { title: "T1486 activity" });
     await prisma.detection.update({ where: { id: stored.id }, data: { caseId: incident.id } });
