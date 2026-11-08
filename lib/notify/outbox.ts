@@ -40,7 +40,7 @@ export interface EnqueueInput {
   /** The agent id or the hunt id. */
   subject: string;
   /** Subject block and the few fields of the state change: no detection contents (point 5). */
-  data: Record<string, unknown>;
+  data: Prisma.InputJsonObject;
   occurredAt?: Date;
 }
 
@@ -81,6 +81,14 @@ export async function enqueueForChannel(
     });
     const id = randomUUID();
     const seq = (last._max.seq ?? 0) + 1;
+    const payload: Prisma.InputJsonObject = {
+      id,
+      event: input.event,
+      tenant: input.tenantId,
+      occurred_at: (input.occurredAt ?? now).toISOString(),
+      seq,
+      ...input.data,
+    };
     await tx.notification.create({
       data: {
         id,
@@ -90,14 +98,7 @@ export async function enqueueForChannel(
         subject: input.subject,
         seq,
         nextAttemptAt: now,
-        payload: {
-          id,
-          event: input.event,
-          tenant: input.tenantId,
-          occurred_at: (input.occurredAt ?? now).toISOString(),
-          seq,
-          ...input.data,
-        } as Prisma.InputJsonValue,
+        payload,
       },
     });
     return 1;

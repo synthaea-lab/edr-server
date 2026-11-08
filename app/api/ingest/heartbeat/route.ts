@@ -58,7 +58,7 @@ export async function POST(req: NextRequest) {
     console.error("Heartbeat error:", error);
 
     // Agent not found
-    if ((error as any).code === "P2025") {
+    if ((error as { code?: string }).code === "P2025") {
       return NextResponse.json(
         { error: "Agent not enrolled" },
         { status: 403 }

@@ -84,6 +84,11 @@ jobs:
         run: npm ci
       - name: prisma client
         run: npx prisma generate
+      # After `prisma generate`: both read the generated client's types.
+      - name: type check
+        run: npm run typecheck
+      - name: lint
+        run: npm run lint
       # `db push`, not `migrate`: server/.gitignore excludes prisma/migrations, so
       # there are none to apply. A fresh database each run makes data loss moot.
       - name: create the schema
