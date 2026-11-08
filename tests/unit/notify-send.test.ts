@@ -135,8 +135,10 @@ describe("sendWebhook", () => {
 
   it("tries the next validated address when a connection cannot be made, and only then", async () => {
     reply = { status: 204, location: "" };
-    // 127.0.0.2 has nothing listening on that port; 127.0.0.1 is the receiver.
-    const r = await sendWebhook(`https://hooks.test:${port}/`, "{}", {}, guard({ resolve: async () => ["127.0.0.2", "127.0.0.1"] }), cert);
+    // ::1 has nothing listening (the receiver binds 127.0.0.1 only), so the connection is
+    // refused at once on every OS. 127.0.0.2 was refused only on Linux: macOS configures
+    // just 127.0.0.1 on lo0, and the connect hung until the test timed out.
+    const r = await sendWebhook(`https://hooks.test:${port}/`, "{}", {}, guard({ resolve: async () => ["::1", "127.0.0.1"] }), cert);
     expect(r).toEqual({ ok: true, statusCode: 204 });
     // An HTTP answer ends the call: the second address is not tried after a 500.
     reply = { status: 500, location: "" };
