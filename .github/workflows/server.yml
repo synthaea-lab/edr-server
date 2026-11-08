@@ -57,10 +57,11 @@ jobs:
           repository: synthaea-lab/edr-agent
           path: agent
           persist-credentials: false
+          # Everything the agent publishes for other repos to test against.
           sparse-checkout: |
-            agent/src/sink.rs
-            crates/schema/tests/fixtures
-            crates/updater/tests/fixtures
+            /agent/src/sink.rs
+            /crates/*/tests/fixtures/
+            /crates/*/data/
           sparse-checkout-cone-mode: false
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -93,3 +94,59 @@ jobs:
       # every integration file clears the same database.
       - name: integration tests (PostgreSQL)
         run: npm run test:integration
+
+  # Unit suites on every OS developers use (no database needed). The integration suites
+  # above need a PostgreSQL service container, which only Linux runners provide.
+  unit-cross-os:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: server
+        shell: bash
+    env:
+      SYNTHAEA_ROOT: ${{ github.workspace }}
+      SYNTHAEA_REQUIRE_SIBLINGS: "1"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: server
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: synthaea-lab/edr-agent
+          path: agent
+          persist-credentials: false
+          # Everything the agent publishes for other repos to test against.
+          sparse-checkout: |
+            /agent/src/sink.rs
+            /crates/*/tests/fixtures/
+            /crates/*/data/
+          sparse-checkout-cone-mode: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: synthaea-lab/edr-ml
+          path: ml
+          persist-credentials: false
+          sparse-checkout: tests/fixtures
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: synthaea-lab/edr-rules
+          path: rules
+          persist-credentials: false
+      # Node 20: what server/Dockerfile ships.
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: server/package-lock.json
+      - name: install
+        run: npm ci
+      - name: prisma client
+        run: npx prisma generate
+      - name: unit tests
+        run: npx vitest run tests/unit
