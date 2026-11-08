@@ -57,10 +57,11 @@ jobs:
           repository: synthaea-lab/edr-agent
           path: agent
           persist-credentials: false
+          # Everything the agent publishes for other repos to test against.
           sparse-checkout: |
-            agent/src/sink.rs
-            crates/schema/tests/fixtures
-            crates/updater/tests/fixtures
+            /agent/src/sink.rs
+            /crates/*/tests/fixtures/
+            /crates/*/data/
           sparse-checkout-cone-mode: false
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -120,10 +121,11 @@ jobs:
           repository: synthaea-lab/edr-agent
           path: agent
           persist-credentials: false
+          # Everything the agent publishes for other repos to test against.
           sparse-checkout: |
-            agent/src/sink.rs
-            crates/schema/tests/fixtures
-            crates/updater/tests/fixtures
+            /agent/src/sink.rs
+            /crates/*/tests/fixtures/
+            /crates/*/data/
           sparse-checkout-cone-mode: false
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
