@@ -1,4 +1,4 @@
-# Split from the synthaea-lab/edr monorepo's root .gitattributes.
+# Split from the former monorepo's root .gitattributes.
 *.sh text eol=lf
 
 # Golden fixtures shared with the agent are compared byte for byte (buildFeed joins with

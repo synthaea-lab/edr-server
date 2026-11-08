@@ -4,7 +4,7 @@ import path from "path";
 import { ContentManifest, canonicalJSON, verifySignature } from "@/lib/content-manifest";
 
 /**
- * Parity-seam golden fixture (CLAUDE.md): the same
+ * Parity-seam golden fixture: the same
  * `content-manifest-golden.json` file is read by
  * `crates/updater/src/content.rs`'s `golden_fixture` test module — a real
  * manifest signed with `updater::key::test_key_pair`'s embedded Ed25519 seed.

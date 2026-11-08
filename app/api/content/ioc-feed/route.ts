@@ -31,7 +31,7 @@ const StageSchema = z.object({
 
 /**
  * Puts one artifact in the content-addressed store (`storage/artifacts/<sha256>`, #804), the
- * step docs/operations/content.md does by hand with `cp`. The name is the hash of the bytes, so
+ * step an operator otherwise does by hand with `cp`. The name is the hash of the bytes, so
  * writing the same bytes twice is the same file and a different feed can never land on it. The
  * write goes through a temporary name and a rename: an agent fetching mid-write never reads half
  * a feed. The temporary name is unique to each write (the pid alone is shared by every request of

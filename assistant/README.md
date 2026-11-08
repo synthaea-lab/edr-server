@@ -1,7 +1,7 @@
 # server/assistant — Analyst AI Assistant
 
-Server-side LLM assistance for the analyst, built on the grounding rule recorded in
-docs/detection/ml.md: **the LLM narrates and navigates structured evidence; it never
+Server-side LLM assistance for the analyst, built on one grounding rule:
+**the LLM narrates and navigates structured evidence; it never
 scores, never judges, never runs on the endpoint.**
 
 Planned capabilities, in trust order:

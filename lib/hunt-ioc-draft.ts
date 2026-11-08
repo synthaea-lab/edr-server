@@ -8,7 +8,7 @@ import { ruleSlug, type GraduationDetection, type GraduationHunt, type Graduatio
 /**
  * Hunt-to-draft-IOC-set graduation (#934, the IOC half of #61's graduation box).
  *
- * The draft is one feed file in the line format `crates/intel` loads (`docs/detection/ioc-matching.md`):
+ * The draft is one feed file in the line format `crates/intel` loads:
  * `sha256:<hex>`, `ip:<address>` and `domain:<name>` lines under `#` comments, which the engine ignores. It is the
  * indicators the hunt's matched detections carry, nothing more: a detection says something
  * suspicious happened, not that every hash or address it names is bad, so every line is for a

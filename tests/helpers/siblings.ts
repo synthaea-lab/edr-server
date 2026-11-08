@@ -1,13 +1,14 @@
 /**
- * Sibling repositories of the Synthaea umbrella (`synthaea-lab/edr`).
+ * Sibling checkouts of the public Synthaea repositories (synthaea-lab/agent, server, ml,
+ * rules).
  *
  * The server is developed on its own, but a few contract tests read files owned by a
  * sibling — the agent's schema fixtures, the ML golden snapshot, the shipped IOC feeds.
- * Checked out through the umbrella, siblings sit next to this repo:
+ * Clone the repositories side by side, so siblings sit next to this one:
  *
- *   <umbrella>/{agent,server,ml,rules,lab}
+ *   <root>/{agent,server,ml,rules}
  *
- * `SYNTHAEA_ROOT` overrides the umbrella location. A test that needs an absent sibling is
+ * `SYNTHAEA_ROOT` points at that parent directory (default: this repo's parent). A test that needs an absent sibling is
  * skipped, unless `SYNTHAEA_REQUIRE_SIBLINGS=1` (set by CI), where it fails instead: a
  * contract test must never go quietly missing where it is supposed to run.
  */
@@ -15,9 +16,9 @@ import { existsSync } from "node:fs";
 import path from "node:path";
 import { it } from "vitest";
 
-export type Sibling = "agent" | "server" | "ml" | "rules" | "lab" | "docs";
+export type Sibling = "agent" | "server" | "ml" | "rules";
 
-/** The umbrella directory holding the sibling checkouts. */
+/** The parent directory holding the sibling checkouts. */
 export const SIBLINGS_ROOT = path.resolve(process.env.SYNTHAEA_ROOT ?? path.join(__dirname, "../../.."));
 
 const required = process.env.SYNTHAEA_REQUIRE_SIBLINGS === "1";
@@ -34,7 +35,7 @@ export function siblingPath(repo: Sibling, rel: string): string {
 export function hasSibling(repo: Sibling, rel: string): boolean {
   const target = siblingPath(repo, rel);
   if (existsSync(target)) return true;
-  const hint = `needs sibling repo \`${repo}\` (${target}); check it out via the umbrella or set SYNTHAEA_ROOT`;
+  const hint = `needs sibling repo \`${repo}\` (${target}); check out synthaea-lab/${repo} next to this repo as ${repo}/ or set SYNTHAEA_ROOT`;
   if (required) throw new Error(`SYNTHAEA_REQUIRE_SIBLINGS=1 but this test ${hint}`);
   console.warn(`skipped: ${hint}`);
   return false;

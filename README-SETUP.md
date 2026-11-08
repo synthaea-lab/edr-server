@@ -72,7 +72,7 @@ agent check-content-manifest --server https://192.0.2.10:8443 --ring canary_0 \
 
 `--ca-cert`, `--cert` and `--key` are also on `agent run`, `apply-release` and
 `apply-content-manifest`; `server.ca_cert` in `agent.toml` does the same for a configured agent
-(`docs/operations/binary-releases.md`, "Control plane on a private CA"). The server identifies
+(for a control plane on a private CA). The server identifies
 an agent by the certificate's CN: an `agents` row whose `enrollment_id` is that CN must exist
 (`agent-test-001` for the test certificate), or the routes answer `403 Agent not enrolled`.
 
@@ -265,7 +265,7 @@ npm run build
 
 ## Production Deployment
 
-See `docs/deployment.md` for production setup instructions.
+This guide covers development and test setups; the compose files are not a production deployment.
 
 ## Environment Variables
 

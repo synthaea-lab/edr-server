@@ -12,7 +12,7 @@ import {
 } from "@/lib/snapshot-manifest";
 
 /**
- * Parity seam (CLAUDE.md): `tests/fixtures/snapshot-manifest-golden.json` is a manifest signed
+ * Parity seam: `tests/fixtures/snapshot-manifest-golden.json` is a manifest signed
  * by the public test `snapshot` key; `crates/updater` reads the same file and derives the same
  * public key from the same seed. If the canonical bytes drift on either side, one of the two
  * tests fails without a live agent.
