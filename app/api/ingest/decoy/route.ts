@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
-import { extractEnrollmentId, verifyProxyAuth } from "@/lib/tenant";
+import { authenticateAgent } from "@/lib/agent-auth";
 import { DecoyLimitError, DecoyRegistration, registerDecoyTokens } from "@/lib/decoy";
 
 /**
@@ -11,34 +11,9 @@ import { DecoyLimitError, DecoyRegistration, registerDecoyTokens } from "@/lib/d
  */
 export async function POST(req: NextRequest) {
   try {
-    try {
-      verifyProxyAuth(req);
-    } catch (error) {
-      console.error("Proxy auth failed:", error);
-      return NextResponse.json(
-        { error: "Forbidden - invalid proxy authentication" },
-        { status: 403 }
-      );
-    }
-
-    const certVerified = req.headers.get("X-Client-Cert-Verified");
-    const certSubject = req.headers.get("X-Client-Cert-Subject");
-    if (certVerified !== "SUCCESS" || !certSubject) {
-      return NextResponse.json(
-        { error: "Unauthorized - mTLS authentication required" },
-        { status: 401 }
-      );
-    }
-
-    const enrollmentId = extractEnrollmentId(certSubject);
-    if (!enrollmentId) {
-      return NextResponse.json({ error: "Invalid certificate subject" }, { status: 400 });
-    }
-
-    const agent = await prisma.agent.findUnique({ where: { enrollmentId } });
-    if (!agent) {
-      return NextResponse.json({ error: "Agent not enrolled" }, { status: 403 });
-    }
+    const auth = await authenticateAgent(req);
+    if ("response" in auth) return auth.response;
+    const { agent } = auth;
 
     const body = DecoyRegistration.parse(await req.json());
     const result = await registerDecoyTokens(prisma, agent, body.tokens);
