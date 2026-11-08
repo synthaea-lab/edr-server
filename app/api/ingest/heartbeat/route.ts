@@ -1,48 +1,18 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { extractEnrollmentId, verifyProxyAuth } from "@/lib/tenant";
+import { authenticateAgent } from "@/lib/agent-auth";
 import { beaconTime, parseHeartbeatBody } from "@/lib/health-beacon";
 import { nextLossObservedAt } from "@/lib/fleet-health";
 import { acceptedOutcome, recordIngest } from "@/lib/ingest-stats";
 
 export async function POST(req: NextRequest) {
   try {
-    // SECURITY: Verify request came through nginx proxy
-    // Prevents header spoofing attacks
-    try {
-      verifyProxyAuth(req);
-    } catch (error) {
-      console.error("Proxy auth failed:", error);
-      return NextResponse.json(
-        { error: "Forbidden - invalid proxy authentication" },
-        { status: 403 }
-      );
-    }
-
-    // Verify mTLS authentication
-    const certVerified = req.headers.get("X-Client-Cert-Verified");
-    const certSubject = req.headers.get("X-Client-Cert-Subject");
-
-    if (certVerified !== "SUCCESS" || !certSubject) {
-      return NextResponse.json(
-        { error: "Unauthorized - mTLS authentication required" },
-        { status: 401 }
-      );
-    }
-
-    // Extract agent enrollment ID from certificate
-    const enrollmentId = extractEnrollmentId(certSubject);
-
-    if (!enrollmentId) {
-      return NextResponse.json(
-        { error: "Invalid certificate subject" },
-        { status: 400 }
-      );
-    }
+    const auth = await authenticateAgent(req);
+    if ("response" in auth) return auth.response;
 
     // Update last-seen timestamp
     const agent = await prisma.agent.update({
-      where: { enrollmentId },
+      where: { id: auth.agent.id },
       data: { lastSeen: new Date() },
     });
 
@@ -56,14 +26,6 @@ export async function POST(req: NextRequest) {
     });
   } catch (error) {
     console.error("Heartbeat error:", error);
-
-    // Agent not found
-    if ((error as any).code === "P2025") {
-      return NextResponse.json(
-        { error: "Agent not enrolled" },
-        { status: 403 }
-      );
-    }
 
     return NextResponse.json(
       { error: "Internal server error" },
