@@ -1,8 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
 import { readFileSync } from "node:fs";
-import path from "node:path";
 import { createHash } from "node:crypto";
+import { itWithSibling, siblingPath } from "../helpers/siblings";
 
 const db = vi.hoisted(() => ({
   agent: { findUnique: vi.fn(), update: vi.fn() },
@@ -54,11 +54,9 @@ beforeEach(() => {
 });
 
 describe("POST /api/ingest/detection", () => {
-  it("accepts the current Rust schema's ML golden fixture", async () => {
-    const fixturePath = path.resolve(
-      __dirname,
-      "../../../crates/schema/tests/fixtures/v34/detection_ml.json"
-    );
+  const ML_FIXTURE = "crates/schema/tests/fixtures/v34/detection_ml.json";
+  itWithSibling("agent", ML_FIXTURE)("accepts the current Rust schema's ML golden fixture", async () => {
+    const fixturePath = siblingPath("agent", ML_FIXTURE);
     const response = await post(JSON.parse(readFileSync(fixturePath, "utf8")));
     expect(response.status).toBe(200);
     expect(db.detection.create).toHaveBeenCalledWith({ data: expect.objectContaining({
@@ -541,8 +539,8 @@ describe("POST /api/ingest/detection", () => {
       warn.mockRestore();
     });
 
-    it("mirrors MAX_EVENTS in the agent's SERVER_MAX_EVENTS, which bounds the damage manifest", () => {
-      const sink = readFileSync(path.resolve(__dirname, "../../../agent/src/sink.rs"), "utf8");
+    itWithSibling("agent", "agent/src/sink.rs")("mirrors MAX_EVENTS in the agent's SERVER_MAX_EVENTS, which bounds the damage manifest", () => {
+      const sink = readFileSync(siblingPath("agent", "agent/src/sink.rs"), "utf8");
       const mirrored = /const SERVER_MAX_EVENTS: usize = (\d+);/.exec(sink);
       expect(mirrored, "SERVER_MAX_EVENTS in agent/src/sink.rs").not.toBeNull();
       expect(Number(mirrored?.[1])).toBe(MAX_EVENTS);
