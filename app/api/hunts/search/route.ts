@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { getTenantId } from "@/lib/tenant";
+import { requireTenantMember } from "@/lib/admin-auth";
 import { MAX_CONCURRENT_SEARCHES_PER_TENANT, parseSearchRequest, searchFailure, searchWithinLimit } from "@/lib/hunt-search";
 import { searchEventsWithinLimit } from "@/lib/hunt-events-search";
 import { eventArchiveFromEnv } from "@/lib/lake-env";
@@ -22,7 +22,9 @@ import { eventArchiveFromEnv } from "@/lib/lake-env";
  */
 export async function POST(req: NextRequest) {
   try {
-    const tenantId = await getTenantId(req);
+    const authed = requireTenantMember(req);
+    if ("response" in authed) return authed.response;
+    const { tenantId } = authed;
     const request = parseSearchRequest(await req.json().catch(() => null));
     const outcome =
       request.source === "events"

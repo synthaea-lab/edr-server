@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { getTenantId, getUserId } from "@/lib/tenant";
+import { AuthenticationError, getTenantId, getUserId } from "@/lib/tenant";
 
 /**
  * better-auth's organization plugin's own default roles (`owner`/`admin`/`member`,
@@ -21,36 +21,46 @@ export function isAdminRole(role: string | null | undefined): boolean {
   return (role?.split(",").map((r) => r.trim()) ?? []).some((r) => ADMIN_ROLES.has(r));
 }
 
+/** The caller's tenant and user, as the middleware derived them from the session. */
+export type TenantCaller = { tenantId: string; userId: string };
+
 /**
- * Requires the caller to be an `owner` or `admin` member of their tenant's organization
- * (#803): a route whose docstring says "admin only" but only checked that a session existed
- * let any member of the tenant publish or roll back content fleet-wide. Refuses a plain
- * `member`, or a caller with no membership row at all, with 403 before the route reads the
- * request body.
+ * Requires a session with an active organization: the gate of every route a plain member of the
+ * tenant may call. A session with no active organization never gets an `x-tenant-id`/`x-user-id`
+ * header (middleware strips any client-supplied one), so `getTenantId`/`getUserId` throw
+ * `AuthenticationError`; that is a 401, not the generic 500 a route's own `catch` would turn it
+ * into (review of #831).
  *
  * Returns the tenant and user ids on success, or the `NextResponse` to send back.
  */
-export async function requireTenantAdmin(
-  req: NextRequest
-): Promise<{ tenantId: string; userId: string } | { response: NextResponse }> {
-  let tenantId: string;
-  let userId: string;
+export function requireTenantMember(req: NextRequest): TenantCaller | { response: NextResponse } {
   try {
-    tenantId = await getTenantId(req);
-    userId = await getUserId(req);
-  } catch {
-    // A session with no active organization never gets an `x-tenant-id`/`x-user-id` header
-    // (middleware strips any client-supplied one); `getTenantId`/`getUserId` throw rather
-    // than return it missing. Without this, every caller of these three routes with no
-    // active organization hit the generic `catch` below as a 500, not the 401 the doc
-    // comment promises (review of #831).
-    return {
-      response: NextResponse.json({ error: "Authentication required" }, { status: 401 }),
-    };
+    return { tenantId: getTenantId(req), userId: getUserId(req) };
+  } catch (error) {
+    if (error instanceof AuthenticationError) {
+      return {
+        response: NextResponse.json({ error: "Authentication required" }, { status: 401 }),
+      };
+    }
+    throw error;
   }
+}
+
+/**
+ * Requires the caller to be an `owner` or `admin` member of their tenant's organization
+ * (#803): a route whose docstring says "admin only" but only checked that a session existed
+ * let any member of the tenant publish or roll back content fleet-wide. Refuses a caller with
+ * no active organization with 401 (`requireTenantMember`), and a plain `member`, or a caller
+ * with no membership row at all, with 403 before the route reads the request body.
+ *
+ * Returns the tenant and user ids on success, or the `NextResponse` to send back.
+ */
+export async function requireTenantAdmin(req: NextRequest): Promise<TenantCaller | { response: NextResponse }> {
+  const caller = requireTenantMember(req);
+  if ("response" in caller) return caller;
 
   const member = await prisma.member.findFirst({
-    where: { organizationId: tenantId, userId },
+    where: { organizationId: caller.tenantId, userId: caller.userId },
     select: { role: true },
   });
 
@@ -60,5 +70,5 @@ export async function requireTenantAdmin(
     };
   }
 
-  return { tenantId, userId };
+  return caller;
 }

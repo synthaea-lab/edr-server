@@ -17,7 +17,7 @@ import { getUserId } from "@/lib/tenant";
 export async function requirePlatformOperator(
   req: NextRequest
 ): Promise<{ userId: string } | { response: NextResponse }> {
-  const userId = await getUserId(req);
+  const userId = getUserId(req);
   const allowed = (process.env.PLATFORM_OPERATOR_USER_IDS ?? "")
     .split(",")
     .map((id) => id.trim())

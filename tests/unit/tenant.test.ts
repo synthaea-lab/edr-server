@@ -1,6 +1,12 @@
 import { describe, it, expect } from "vitest";
 import { NextRequest } from "next/server";
-import { buildIdentityHeaders, extractEnrollmentId, getTenantId } from "@/lib/tenant";
+import {
+  AuthenticationError,
+  buildIdentityHeaders,
+  extractEnrollmentId,
+  getTenantId,
+  getUserId,
+} from "@/lib/tenant";
 
 describe("tenant helpers", () => {
   describe("extractEnrollmentId", () => {
@@ -79,13 +85,31 @@ describe("tenant helpers", () => {
   });
 
   describe("getTenantId after buildIdentityHeaders", () => {
-    it("rejects a spoofed tenant id end to end when the session has no organization", async () => {
+    it("rejects a spoofed tenant id end to end when the session has no organization", () => {
       const forwarded = buildIdentityHeaders(
         new Headers({ "x-tenant-id": "victim-tenant" }),
         { tenantId: null, userId: "u1" }
       );
       const req = new NextRequest("http://localhost/api/cases", { headers: forwarded });
-      await expect(getTenantId(req)).rejects.toThrow("No tenant context");
+      expect(() => getTenantId(req)).toThrow(AuthenticationError);
+      expect(() => getTenantId(req)).toThrow("No tenant context");
+    });
+  });
+
+  describe("getTenantId and getUserId", () => {
+    const withHeaders = (headers: Record<string, string>) =>
+      new NextRequest("http://localhost/api/cases", { headers });
+
+    it("return the identity the middleware forwarded", () => {
+      const req = withHeaders({ "x-tenant-id": "t1", "x-user-id": "u1" });
+      expect(getTenantId(req)).toBe("t1");
+      expect(getUserId(req)).toBe("u1");
+    });
+
+    it("throw AuthenticationError when the identity is missing", () => {
+      const req = withHeaders({});
+      expect(() => getTenantId(req)).toThrow(AuthenticationError);
+      expect(() => getUserId(req)).toThrow(AuthenticationError);
     });
   });
 });

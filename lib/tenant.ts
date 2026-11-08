@@ -44,28 +44,42 @@ export function buildIdentityHeaders(
 }
 
 /**
- * Extracts tenant ID from request headers.
- * Middleware injects x-tenant-id from session.
+ * The request carries no session identity: the middleware found no session, or a session with
+ * no active organization, so it forwarded no `x-tenant-id`/`x-user-id`. Typed so a guard can
+ * answer 401 for it and leave every other failure to the route's own error handling.
  */
-export async function getTenantId(req: NextRequest): Promise<string> {
+export class AuthenticationError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "AuthenticationError";
+  }
+}
+
+/**
+ * The tenant id the middleware derived from the session's active organization.
+ *
+ * @throws AuthenticationError if the request has none
+ */
+export function getTenantId(req: NextRequest): string {
   const tenantId = req.headers.get("x-tenant-id");
 
   if (!tenantId) {
-    throw new Error("No tenant context - authentication required");
+    throw new AuthenticationError("No tenant context - authentication required");
   }
 
   return tenantId;
 }
 
 /**
- * Extracts user ID from request headers.
- * Middleware injects x-user-id from session.
+ * The user id the middleware derived from the session, for audit logging and ownership.
+ *
+ * @throws AuthenticationError if the request has none
  */
-export async function getUserId(req: NextRequest): Promise<string> {
+export function getUserId(req: NextRequest): string {
   const userId = req.headers.get("x-user-id");
 
   if (!userId) {
-    throw new Error("No user context - authentication required");
+    throw new AuthenticationError("No user context - authentication required");
   }
 
   return userId;

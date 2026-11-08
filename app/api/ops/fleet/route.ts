@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { getTenantId } from "@/lib/tenant";
+import { requireTenantMember } from "@/lib/admin-auth";
 import { loadFleet } from "@/lib/fleet";
 
 /**
@@ -12,7 +12,9 @@ import { loadFleet } from "@/lib/fleet";
  */
 export async function GET(req: NextRequest) {
   try {
-    const tenantId = await getTenantId(req);
+    const authed = requireTenantMember(req);
+    if ("response" in authed) return authed.response;
+    const { tenantId } = authed;
     return NextResponse.json({ agents: await loadFleet(prisma, tenantId) });
   } catch (error) {
     console.error("Fleet health query error:", error);

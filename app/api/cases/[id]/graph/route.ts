@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { getTenantId } from "@/lib/tenant";
+import { requireTenantMember } from "@/lib/admin-auth";
 import { caseSubgraph, sortGraph } from "@/lib/graph";
 
 /**
@@ -14,7 +14,9 @@ import { caseSubgraph, sortGraph } from "@/lib/graph";
  */
 export async function GET(req: NextRequest, { params }: { params: { id: string } }) {
   try {
-    const tenantId = await getTenantId(req);
+    const authed = requireTenantMember(req);
+    if ("response" in authed) return authed.response;
+    const { tenantId } = authed;
     const caseId = params.id;
 
     // `tenantId` repeated on the relation filter, not left to the `caseId`

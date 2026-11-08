@@ -335,7 +335,7 @@ describe("GET /api/release (list)", () => {
   it("lists only the caller's tenant", async () => {
     db.binaryRelease.findMany.mockResolvedValue([]);
     const res = await listReleases(
-      new NextRequest("http://localhost/api/release?ring=prod", { headers: { "x-tenant-id": "t1" } })
+      new NextRequest("http://localhost/api/release?ring=prod", { headers: { "x-tenant-id": "t1", "x-user-id": "u1" } })
     );
     expect(res.status).toBe(200);
     expect(db.binaryRelease.findMany.mock.calls[0][0].where).toEqual({ tenantId: "t1", ring: "prod" });
