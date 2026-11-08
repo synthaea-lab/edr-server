@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { getTenantId, getUserId } from "@/lib/tenant";
+import { requireTenantAdmin } from "@/lib/admin-auth";
 import { z } from "zod";
 
 const EnrollmentSchema = z.object({
@@ -15,18 +15,37 @@ const EnrollmentSchema = z.object({
   version: z.string().optional(),
 });
 
+/**
+ * POST /api/enrollment
+ * Registers an agent with the caller's tenant (admin-only, tenant-scoped).
+ *
+ * Authentication: better-auth session, `owner` or `admin` member of the tenant: adding a host
+ * to the fleet is a fleet change, like moving one between rings.
+ * Response: `enrolled` or `already_enrolled` with the agent's id and ring, or 409 when the
+ * enrollment id belongs to another tenant's agent.
+ */
 export async function POST(req: NextRequest) {
   try {
-    const tenantId = await getTenantId(req);
-    const userId = await getUserId(req);
+    const authed = await requireTenantAdmin(req);
+    if ("response" in authed) return authed.response;
+    const { tenantId, userId } = authed;
 
     const body = await req.json();
     const { enrollmentId, hostname, version } = EnrollmentSchema.parse(body);
 
-    // Check if agent already enrolled
+    // `enrollmentId` is unique across tenants, so look it up globally, but only ever describe
+    // an agent of the caller's own tenant: anything else would disclose another tenant's
+    // agent id and ring to whoever guessed its enrollment id.
     const existing = await prisma.agent.findUnique({
       where: { enrollmentId },
     });
+
+    if (existing && existing.tenantId !== tenantId) {
+      return NextResponse.json(
+        { error: "Enrollment id already in use" },
+        { status: 409 }
+      );
+    }
 
     if (existing) {
       return NextResponse.json({
