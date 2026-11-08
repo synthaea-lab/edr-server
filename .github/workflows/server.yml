@@ -54,7 +54,7 @@ jobs:
           persist-credentials: false
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          repository: synthaea-lab/edr-agent
+          repository: synthaea-lab/agent
           path: agent
           persist-credentials: false
           # Everything the agent publishes for other repos to test against.
@@ -65,13 +65,13 @@ jobs:
           sparse-checkout-cone-mode: false
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          repository: synthaea-lab/edr-ml
+          repository: synthaea-lab/ml
           path: ml
           persist-credentials: false
           sparse-checkout: tests/fixtures
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          repository: synthaea-lab/edr-rules
+          repository: synthaea-lab/rules
           path: rules
           persist-credentials: false
       # Node 20: what server/Dockerfile ships.
@@ -118,7 +118,7 @@ jobs:
           persist-credentials: false
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          repository: synthaea-lab/edr-agent
+          repository: synthaea-lab/agent
           path: agent
           persist-credentials: false
           # Everything the agent publishes for other repos to test against.
@@ -129,13 +129,13 @@ jobs:
           sparse-checkout-cone-mode: false
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          repository: synthaea-lab/edr-ml
+          repository: synthaea-lab/ml
           path: ml
           persist-credentials: false
           sparse-checkout: tests/fixtures
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          repository: synthaea-lab/edr-rules
+          repository: synthaea-lab/rules
           path: rules
           persist-credentials: false
       # Node 20: what server/Dockerfile ships.

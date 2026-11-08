@@ -1,6 +1,6 @@
 /**
- * Sibling checkouts of the public Synthaea repositories (edr-agent, edr-server, edr-ml,
- * edr-rules).
+ * Sibling checkouts of the public Synthaea repositories (synthaea-lab/agent, server, ml,
+ * rules).
  *
  * The server is developed on its own, but a few contract tests read files owned by a
  * sibling — the agent's schema fixtures, the ML golden snapshot, the shipped IOC feeds.
@@ -35,7 +35,7 @@ export function siblingPath(repo: Sibling, rel: string): string {
 export function hasSibling(repo: Sibling, rel: string): boolean {
   const target = siblingPath(repo, rel);
   if (existsSync(target)) return true;
-  const hint = `needs sibling repo \`${repo}\` (${target}); clone it next to this repo or set SYNTHAEA_ROOT`;
+  const hint = `needs sibling repo \`${repo}\` (${target}); check out synthaea-lab/${repo} next to this repo as ${repo}/ or set SYNTHAEA_ROOT`;
   if (required) throw new Error(`SYNTHAEA_REQUIRE_SIBLINGS=1 but this test ${hint}`);
   console.warn(`skipped: ${hint}`);
   return false;

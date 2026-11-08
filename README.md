@@ -1,9 +1,10 @@
 # server — Control Plane
 
-Part of Synthaea, alongside the public `edr-agent`, `edr-ml` and `edr-rules` repositories.
-Contract tests that read sibling repos (`agent`, `ml`, `rules`) resolve them through
-`tests/helpers/siblings.ts`: clone the repositories side by side as `agent/`, `server/`,
-`ml/` and `rules/` (or point `SYNTHAEA_ROOT` at their parent). Present → they run, absent →
+Part of Synthaea, alongside the public synthaea-lab/agent, synthaea-lab/ml and
+synthaea-lab/rules repositories. Contract tests that read sibling repos (`agent`, `ml`,
+`rules`) resolve them through `tests/helpers/siblings.ts`: check them out next to this repo
+as `agent/`, `ml/` and `rules/` (this one as `server/`), or point `SYNTHAEA_ROOT` at their
+parent. Present → they run, absent →
 they skip with a notice (`SYNTHAEA_REQUIRE_SIBLINGS=1` turns that into a failure, as CI
 does). Setup and local runs: `README-SETUP.md`.
 
