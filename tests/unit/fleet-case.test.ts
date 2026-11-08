@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
-import path from "node:path";
 import { describe, expect, it } from "vitest";
+import { itWithSibling, siblingPath } from "../helpers/siblings";
 import {
   COMMON_HOST_FRACTION,
   FLEET_JOIN_WINDOW_MS,
@@ -128,8 +128,9 @@ describe("joinKeys", () => {
     expect(joinKeys("a1", { ...logon("Alice"), target_user_sid: sid }, T0)).toEqual([{ kind: "identity", key: "alice" }]);
   });
 
-  it("the generic-SID vectors shared with the agent hold: the join and the rules agree on every SID", () => {
-    const file = path.resolve(__dirname, "../../../crates/rules/data/generic-sid-vectors.txt");
+  const SID_VECTORS = "crates/rules/data/generic-sid-vectors.txt";
+  itWithSibling("agent", SID_VECTORS)("the generic-SID vectors shared with the agent hold: the join and the rules agree on every SID", () => {
+    const file = siblingPath("agent", SID_VECTORS);
     const rows = readFileSync(file, "utf8")
       .split(/\r?\n/)
       .filter((line) => line !== "" && !line.startsWith("#"))
