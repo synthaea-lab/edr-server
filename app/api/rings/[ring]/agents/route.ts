@@ -1,3 +1,4 @@
+import type { Prisma } from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getTenantId } from "@/lib/tenant";
@@ -35,7 +36,7 @@ export async function GET(
     const limit = parseInt(searchParams.get("limit") || "100", 10);
 
     // Build where clause
-    const where: any = {
+    const where: Prisma.AgentWhereInput = {
       tenantId,
       ring,
     };

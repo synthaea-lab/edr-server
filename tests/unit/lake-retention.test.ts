@@ -111,12 +111,12 @@ function fakeDb(
   tenants: { id: string; lakeRetentionDays: number }[],
   failures: { create?: (n: number) => boolean; update?: boolean } = {}
 ) {
-  const rows: Record<string, any>[] = [];
+  const rows: Record<string, unknown>[] = [];
   let creates = 0;
-  const db = {
+  const fake = {
     tenant: { findMany: vi.fn(async ({ where }: { where: { id: { in: string[] } } }) => tenants.filter((t) => where.id.in.includes(t.id))) },
     lakeDeletion: {
-      create: vi.fn(async ({ data }: { data: Record<string, unknown> }) => {
+      create: vi.fn(async ({ data }: { data: Record<string, unknown> }): Promise<Record<string, unknown>> => {
         creates += 1;
         if (failures.create?.(creates)) throw new Error("db down (create)");
         const row = { id: `row-${rows.length}`, completedAt: null, deletedCount: null, failedCount: null, error: null, verifiedEmpty: false, ...data };
@@ -129,8 +129,9 @@ function fakeDb(
         return {};
       }),
     },
-  } as unknown as Pick<PrismaClient, "tenant" | "lakeDeletion">;
-  return { db, deletions: rows };
+  };
+  const db = fake as unknown as Pick<PrismaClient, "tenant" | "lakeDeletion">;
+  return { db, deletions: rows, lakeDeletion: fake.lakeDeletion };
 }
 
 /** A store in memory. `stuck` keys cannot be removed (reported), `throwAfter` makes `delete` throw once that many keys have gone. */
@@ -320,9 +321,9 @@ describe("pruneLake", () => {
     const order: string[] = [];
     const realDelete = store.delete.bind(store);
     store.delete = async (keys) => { order.push("delete"); return realDelete(keys); };
-    const { db } = fakeDb([{ id: "t1", lakeRetentionDays: 30 }]);
-    (db.lakeDeletion.create as any).mockImplementationOnce(async ({ data }: any) => { order.push("create"); return { id: "r0", ...data }; });
-    (db.lakeDeletion.update as any).mockImplementationOnce(async () => { order.push("update"); return {}; });
+    const { db, lakeDeletion } = fakeDb([{ id: "t1", lakeRetentionDays: 30 }]);
+    lakeDeletion.create.mockImplementationOnce(async ({ data }) => { order.push("create"); return { id: "r0", ...data }; });
+    lakeDeletion.update.mockImplementationOnce(async () => { order.push("update"); return {}; });
     await pruneLake(db, store, NOW);
     expect(order).toEqual(["create", "delete", "update"]);
   });

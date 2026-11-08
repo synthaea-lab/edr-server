@@ -215,7 +215,7 @@ function IngestPanel({
       <h3 className="mb-1 text-lg font-semibold text-gray-900">Ingest health</h3>
       <p className="mb-2 text-xs text-gray-600">
         What the server took from each agent, by kind of data. Refused and late are counted over the
-        current and previous hour. Shown, not alerted on, and it does not change a host's status.
+        current and previous hour. Shown, not alerted on, and it does not change a host&apos;s status.
       </p>
       <div className="overflow-x-auto rounded-lg border border-gray-200 bg-white">
         <table className="min-w-full text-sm">

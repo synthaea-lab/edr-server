@@ -9,6 +9,16 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
+/** The fields of the S3 commands' input that the fake bucket reads. */
+type FakeCommandInput = {
+  Key: string;
+  Body: Uint8Array;
+  Prefix?: string;
+  ContinuationToken?: string;
+  MaxKeys?: number;
+  Delete: { Objects: { Key: string }[] };
+};
+
 /** An in-memory bucket behind the one method the store uses, with pages of two and injectable delete errors (per key, or a whole request failing on its nth call). */
 function fakeBucket(
   opts: { deleteErrors?: { Key: string; Code: string }[]; failDeleteCall?: number; versioning?: string | "denied"; delayMs?: number } = {}
@@ -18,7 +28,7 @@ function fakeBucket(
   const sent: { name: string; input: Record<string, unknown> }[] = [];
   const client = {
     async send(command: unknown, options?: { abortSignal?: AbortSignal }) {
-      const c = command as { constructor: { name: string }; input: Record<string, any> };
+      const c = command as { constructor: { name: string }; input: FakeCommandInput };
       sent.push({ name: c.constructor.name, input: c.input });
       // A slow store: the call takes `delayMs`, and is abandoned when `abortSignal` fires. Like the real SDK it rejects with an
       // AbortError whose `cause` is the signal's reason, not with the reason itself.
