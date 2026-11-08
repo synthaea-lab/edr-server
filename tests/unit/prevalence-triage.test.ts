@@ -175,7 +175,7 @@ describe("GET /api/cases/[id] prevalence", () => {
 
   const call = (tenant = "t1") =>
     getCase(
-      new NextRequest("http://localhost/api/cases/c1", { headers: { "x-tenant-id": tenant } }),
+      new NextRequest("http://localhost/api/cases/c1", { headers: { "x-tenant-id": tenant, "x-user-id": "u1" } }),
       { params: { id: "c1" } }
     );
 

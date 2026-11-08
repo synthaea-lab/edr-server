@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { getTenantId } from "@/lib/tenant";
+import { requireTenantMember } from "@/lib/admin-auth";
 import { loadRings } from "@/lib/rings";
 
 /**
@@ -13,7 +13,9 @@ import { loadRings } from "@/lib/rings";
  */
 export async function GET(req: NextRequest) {
   try {
-    const tenantId = await getTenantId(req);
+    const authed = requireTenantMember(req);
+    if ("response" in authed) return authed.response;
+    const { tenantId } = authed;
     return NextResponse.json(await loadRings(prisma, tenantId));
   } catch (error) {
     console.error("Ring status query error:", error);

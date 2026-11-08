@@ -3,8 +3,7 @@ import { Prisma } from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
-import { requireTenantAdmin } from "@/lib/admin-auth";
-import { getTenantId } from "@/lib/tenant";
+import { requireTenantAdmin, requireTenantMember } from "@/lib/admin-auth";
 import { EVENTS, CHANNELS_PER_TENANT, CRON_PERIOD_SECONDS } from "@/lib/notify/outbox";
 import { guardOptionsFromEnv, NotifyBlockedError, resolvePublicTarget } from "@/lib/notify/guard";
 import { currentKey, sealSecret, sealUrl } from "@/lib/notify/secret";
@@ -23,12 +22,9 @@ const CreateSchema = z.object({
  */
 export async function GET(req: NextRequest) {
   try {
-    let tenantId: string;
-    try {
-      tenantId = await getTenantId(req);
-    } catch {
-      return NextResponse.json({ error: "Authentication required" }, { status: 401 });
-    }
+    const authed = requireTenantMember(req);
+    if ("response" in authed) return authed.response;
+    const { tenantId } = authed;
     const channels = await prisma.notificationChannel.findMany({
       where: { tenantId },
       orderBy: { createdAt: "asc" },

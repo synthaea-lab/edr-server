@@ -1,10 +1,15 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { getTenantId } from "@/lib/tenant";
+import { requireTenantMember } from "@/lib/admin-auth";
 import { HuntValidationError, parseHuntQuery } from "@/lib/hunt";
 import { draftRuleFromHunt, parseGraduationRequest } from "@/lib/hunt-graduation";
 import { draftIocSetFromHunt, graduationKind, iocObservations, parseIocGraduationRequest } from "@/lib/hunt-ioc-draft";
 import { countReportingHosts, getPrevalenceBatch, lookedUpKeys, prevalenceKey } from "@/lib/prevalence";
+
+/** The detection ids a run sampled: its JSON column holds an array of strings. */
+function sampledDetectionIds(sample: unknown): string[] {
+  return Array.isArray(sample) ? sample.filter((id): id is string => typeof id === "string") : [];
+}
 
 /**
  * POST /api/hunts/[id]/graduate — a draft from a saved hunt: a Sigma rule (#618) or an IOC set (#934).
@@ -17,7 +22,9 @@ import { countReportingHosts, getPrevalenceBatch, lookedUpKeys, prevalenceKey } 
  */
 export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
   try {
-    const tenantId = await getTenantId(req);
+    const authed = requireTenantMember(req);
+    if ("response" in authed) return authed.response;
+    const { tenantId } = authed;
     const body = await req.json().catch(() => null);
     const kind = graduationKind(body);
     const request = kind === "sigma" ? parseGraduationRequest(body) : (parseIocGraduationRequest(body), null);
@@ -45,11 +52,8 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
         { status: 422 }
       );
     }
-    const ids = Array.isArray(run.sampleDetectionIds)
-      ? run.sampleDetectionIds.filter((id): id is string => typeof id === "string")
-      : [];
     const detections = await prisma.detection.findMany({
-      where: { tenantId, id: { in: ids } },
+      where: { tenantId, id: { in: sampledDetectionIds(run.sampleDetectionIds) } },
       select: { id: true, technique: true, severity: true, event: true, timestamp: true },
       orderBy: { timestamp: "desc" },
     });

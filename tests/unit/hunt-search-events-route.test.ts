@@ -46,7 +46,7 @@ const post = (body: unknown, tenant: string | null = "t-session") =>
   POST(
     new NextRequest("http://localhost/api/hunts/search", {
       method: "POST",
-      headers: tenant ? { "x-tenant-id": tenant } : {},
+      headers: tenant ? { "x-tenant-id": tenant, "x-user-id": "u-session" } : {},
       body: JSON.stringify(body),
     })
   );

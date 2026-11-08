@@ -1,9 +1,9 @@
 import { dropHuntFromChannels } from "@/lib/notify/outbox";
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { getTenantId } from "@/lib/tenant";
+import { requireTenantMember } from "@/lib/admin-auth";
 import { HuntValidationError, parseHuntQuery, type HuntQuery } from "@/lib/hunt";
-import { parseHuntInput, sameQuery } from "@/lib/hunt-input";
+import { parseHuntInput, sameQuery, type HuntInput } from "@/lib/hunt-input";
 
 type Params = { params: { id: string } };
 
@@ -21,6 +21,18 @@ function queryDiffers(next: HuntQuery, stored: unknown): boolean {
   }
 }
 
+/** The columns a PATCH writes: only the fields it names, and a new version when the query changed. */
+function huntChanges(input: HuntInput, storedQuery: unknown) {
+  const queryChanged = input.query !== undefined && queryDiffers(input.query, storedQuery);
+  return {
+    ...(input.name !== undefined && { name: input.name }),
+    ...(input.description !== undefined && { description: input.description }),
+    ...(input.scheduleMinutes !== undefined && { scheduleMinutes: input.scheduleMinutes }),
+    ...(input.active !== undefined && { active: input.active }),
+    ...(queryChanged && { query: input.query as object, version: { increment: 1 } }),
+  };
+}
+
 /**
  * GET /api/hunts/[id] — the hunt and its run history (newest first, `?limit=`, default 20).
  * PATCH — change name, description, query, schedule or active. A change to `query`
@@ -31,7 +43,9 @@ function queryDiffers(next: HuntQuery, stored: unknown): boolean {
  */
 export async function GET(req: NextRequest, { params }: Params) {
   try {
-    const tenantId = await getTenantId(req);
+    const authed = requireTenantMember(req);
+    if ("response" in authed) return authed.response;
+    const { tenantId } = authed;
     const limit = Math.min(Math.max(Number(new URL(req.url).searchParams.get("limit")) || 20, 1), 100);
     const hunt = await prisma.hunt.findFirst({ where: { id: params.id, tenantId } });
     if (!hunt) return NextResponse.json({ error: "Hunt not found" }, { status: 404 });
@@ -49,21 +63,16 @@ export async function GET(req: NextRequest, { params }: Params) {
 
 export async function PATCH(req: NextRequest, { params }: Params) {
   try {
-    const tenantId = await getTenantId(req);
+    const authed = requireTenantMember(req);
+    if ("response" in authed) return authed.response;
+    const { tenantId } = authed;
     const input = parseHuntInput(await req.json().catch(() => null), true);
     const hunt = await prisma.hunt.findFirst({ where: { id: params.id, tenantId } });
     if (!hunt) return NextResponse.json({ error: "Hunt not found" }, { status: 404 });
 
-    const queryChanged = input.query !== undefined && queryDiffers(input.query, hunt.query);
     const updated = await prisma.hunt.update({
       where: { id: hunt.id },
-      data: {
-        ...(input.name !== undefined && { name: input.name }),
-        ...(input.description !== undefined && { description: input.description }),
-        ...(input.scheduleMinutes !== undefined && { scheduleMinutes: input.scheduleMinutes }),
-        ...(input.active !== undefined && { active: input.active }),
-        ...(queryChanged && { query: input.query as object, version: { increment: 1 } }),
-      },
+      data: huntChanges(input, hunt.query),
     });
     return NextResponse.json({ hunt: updated });
   } catch (error) {
@@ -77,7 +86,9 @@ export async function PATCH(req: NextRequest, { params }: Params) {
 
 export async function DELETE(req: NextRequest, { params }: Params) {
   try {
-    const tenantId = await getTenantId(req);
+    const authed = requireTenantMember(req);
+    if ("response" in authed) return authed.response;
+    const { tenantId } = authed;
     const { count } = await prisma.hunt.deleteMany({ where: { id: params.id, tenantId } });
     if (count === 0) return NextResponse.json({ error: "Hunt not found" }, { status: 404 });
     // The hunt leaves the lists of the notification channels that held it (ADR-0036). The hunt is

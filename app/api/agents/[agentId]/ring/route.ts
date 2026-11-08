@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { getTenantId } from "@/lib/tenant";
-import { requireTenantAdmin } from "@/lib/admin-auth";
+import { requireTenantAdmin, requireTenantMember } from "@/lib/admin-auth";
 import { z } from "zod";
 
 const RingAssignmentSchema = z.object({
@@ -104,7 +103,9 @@ export async function GET(
   { params }: { params: { agentId: string } }
 ) {
   try {
-    const tenantId = await getTenantId(req);
+    const authed = requireTenantMember(req);
+    if ("response" in authed) return authed.response;
+    const { tenantId } = authed;
     const { agentId } = params;
 
     const agent = await prisma.agent.findFirst({

@@ -168,7 +168,7 @@ describe("getSightingsOf", () => {
 describe("GET /api/prevalence", () => {
   beforeEach(() => vi.clearAllMocks());
 
-  const req = (qs: string, headers: Record<string, string> = { "x-tenant-id": "t1" }) =>
+  const req = (qs: string, headers: Record<string, string> = { "x-tenant-id": "t1", "x-user-id": "u1" }) =>
     new NextRequest(`http://localhost/api/prevalence${qs}`, { headers });
 
   it("answers seen:false, not 404, for an unknown key", async () => {
@@ -184,7 +184,7 @@ describe("GET /api/prevalence", () => {
     db.prevalenceSighting.aggregate.mockResolvedValue({
       _count: { _all: 2 }, _sum: { count: 2 }, _min: { firstSeen: new Date(0) }, _max: { lastSeen: new Date(0) },
     });
-    await getPrevalenceRoute(req("?kind=domain&key=x.example", { "x-tenant-id": "tenant-b" }));
+    await getPrevalenceRoute(req("?kind=domain&key=x.example", { "x-tenant-id": "tenant-b", "x-user-id": "u1" }));
     expect(db.prevalenceSighting.aggregate.mock.calls[0][0].where.tenantId).toBe("tenant-b");
   });
 
