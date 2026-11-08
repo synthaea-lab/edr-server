@@ -539,10 +539,10 @@ describe("POST /api/ingest/detection", () => {
       warn.mockRestore();
     });
 
-    itWithSibling("agent", "agent/src/sink.rs")("mirrors MAX_EVENTS in the agent's SERVER_MAX_EVENTS, which bounds the damage manifest", () => {
-      const sink = readFileSync(siblingPath("agent", "agent/src/sink.rs"), "utf8");
+    itWithSibling("agent", "agent/src/sink/mod.rs")("mirrors MAX_EVENTS in the agent's SERVER_MAX_EVENTS, which bounds the damage manifest", () => {
+      const sink = readFileSync(siblingPath("agent", "agent/src/sink/mod.rs"), "utf8");
       const mirrored = /const SERVER_MAX_EVENTS: usize = (\d+);/.exec(sink);
-      expect(mirrored, "SERVER_MAX_EVENTS in agent/src/sink.rs").not.toBeNull();
+      expect(mirrored, "SERVER_MAX_EVENTS in agent/src/sink/mod.rs").not.toBeNull();
       expect(Number(mirrored?.[1])).toBe(MAX_EVENTS);
     });
 
