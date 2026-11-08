@@ -154,3 +154,16 @@ export async function createTestCase(
 }
 
 export { prisma };
+
+/**
+ * Creates a user and a tenant it is a member of with `role`: the identity a console session
+ * forwards to a tenant-scoped route (`x-tenant-id`/`x-user-id`), with the `Member` row
+ * `requireTenantAdmin` checks.
+ */
+export async function createTestMember(role = "owner") {
+  const user = await prisma.user.create({
+    data: { id: randomUUID(), email: `${randomUUID()}@example.com`, name: "Test User" },
+  });
+  const tenant = await createTestTenant(undefined, { userId: user.id, role });
+  return { tenantId: tenant.id, userId: user.id };
+}

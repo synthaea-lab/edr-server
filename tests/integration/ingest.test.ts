@@ -1,14 +1,27 @@
 import { describe, it, expect, beforeEach, afterAll } from "vitest";
-import {
-  cleanDatabase,
-  createTestTenant,
-  createTestAgent,
-  prisma,
-} from "../helpers/db";
-import { createMtlsHeaders, createDetectionPayload } from "../helpers/http";
+import { NextRequest } from "next/server";
+import { cleanDatabase, createTestAgent, createTestTenant, prisma } from "../helpers/db";
+import { createDetectionPayload, createMtlsHeaders } from "../helpers/http";
+import { POST as ingestDetection } from "@/app/api/ingest/detection/route";
+import { POST as heartbeat } from "@/app/api/ingest/heartbeat/route";
 
-describe("Ingest API", () => {
+const SECRET = "test-proxy-secret";
+const MINUTE_AGO = () => new Date(Date.now() - 60_000);
+
+function agentRequest(path: string, enrollmentId: string, body: unknown, extra: Record<string, string> = {}) {
+  return new NextRequest(`http://localhost${path}`, {
+    method: "POST",
+    headers: { ...createMtlsHeaders(enrollmentId), "X-Proxy-Secret": SECRET, ...extra },
+    body: JSON.stringify(body),
+  });
+}
+
+const postDetection = (enrollmentId: string, body: unknown, extra?: Record<string, string>) =>
+  ingestDetection(agentRequest("/api/ingest/detection", enrollmentId, body, extra));
+
+describe("Ingest API (real database)", () => {
   beforeEach(async () => {
+    process.env.NGINX_PROXY_SECRET = SECRET;
     await cleanDatabase();
   });
 
@@ -18,253 +31,95 @@ describe("Ingest API", () => {
   });
 
   describe("POST /api/ingest/detection", () => {
-    it("should accept detection from enrolled agent", async () => {
-      // Setup
+    it("stores a detection from an enrolled agent under its tenant and marks the agent alive", async () => {
       const tenant = await createTestTenant();
-      const agent = await createTestAgent(tenant.id, "agent-test-001");
+      const agent = await createTestAgent(tenant.id, "agent-test-001", { lastSeen: MINUTE_AGO() });
+      const payload = createDetectionPayload({ technique: "T1059.001", severity: "critical" });
 
-      // Test detection payload
-      const payload = createDetectionPayload({
+      const res = await postDetection(agent.enrollmentId, payload);
+
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual({ status: "accepted" });
+      const stored = await prisma.detection.findMany({ where: { agentId: agent.id } });
+      expect(stored).toHaveLength(1);
+      expect(stored[0]).toMatchObject({
+        tenantId: tenant.id,
         technique: "T1059.001",
         severity: "critical",
+        timestamp: new Date(payload.timestamp_ns / 1_000_000),
       });
-
-      // In real test, would use fetch to hit endpoint
-      // For now, test the validation schema
-      const { z } = await import("zod");
-      const DetectionSchema = z.object({
-        timestamp_ns: z.number(),
-        technique: z.string(),
-        severity: z.enum(["low", "medium", "high", "critical"]),
-        event: z.record(z.any()),
-        meta: z.record(z.any()),
-      });
-
-      const result = DetectionSchema.safeParse(payload);
-      expect(result.success).toBe(true);
-
-      // Verify database schema accepts the data
-      const detection = await prisma.detection.create({
-        data: {
-          tenantId: tenant.id,
-          agentId: agent.id,
-          timestamp: new Date(payload.timestamp_ns / 1_000_000),
-          technique: payload.technique,
-          severity: payload.severity,
-          event: payload.event,
-          meta: payload.meta,
-        },
-      });
-
-      expect(detection.id).toBeDefined();
-      expect(detection.technique).toBe("T1059.001");
-      expect(detection.severity).toBe("critical");
+      const after = await prisma.agent.findUniqueOrThrow({ where: { id: agent.id } });
+      expect(after.lastSeen.getTime()).toBeGreaterThan(agent.lastSeen.getTime());
     });
 
-    it("should reject detection with invalid severity", async () => {
-      const payload = {
-        timestamp_ns: Date.now() * 1_000_000,
-        technique: "T1059.001",
-        severity: "invalid",
-        event: {},
-        meta: {},
-      };
-
-      const { z } = await import("zod");
-      const DetectionSchema = z.object({
-        timestamp_ns: z.number(),
-        technique: z.string(),
-        severity: z.enum(["low", "medium", "high", "critical"]),
-        event: z.record(z.any()),
-        meta: z.record(z.any()),
-      });
-
-      const result = DetectionSchema.safeParse(payload);
-      expect(result.success).toBe(false);
-    });
-
-    it("enforces retry-key uniqueness per agent while allowing legacy detections", async () => {
-      const tenant = await createTestTenant();
-      const firstAgent = await createTestAgent(tenant.id, "agent-retry-001");
-      const secondAgent = await createTestAgent(tenant.id, "agent-retry-002");
-      const key = "b9628fc1-2134-4d4d-bbe6-83fdd1929d7a";
-      const data = {
-        tenantId: tenant.id,
-        timestamp: new Date(),
-        technique: "T1059",
-        severity: "medium",
-        event: {},
-        meta: {},
-      };
-
-      await prisma.detection.create({ data: { ...data, agentId: firstAgent.id, ingestId: key } });
-      await expect(prisma.detection.create({
-        data: { ...data, agentId: firstAgent.id, ingestId: key },
-      })).rejects.toMatchObject({ code: "P2002" });
-      await prisma.detection.create({ data: { ...data, agentId: secondAgent.id, ingestId: key } });
-      await prisma.detection.create({ data: { ...data, agentId: firstAgent.id } });
-      await prisma.detection.create({ data: { ...data, agentId: firstAgent.id } });
-    });
-
-    it("should update agent last-seen timestamp", async () => {
+    it("refuses a detection with an invalid severity with 400 and stores nothing", async () => {
       const tenant = await createTestTenant();
       const agent = await createTestAgent(tenant.id);
 
-      const oldLastSeen = agent.lastSeen;
+      const res = await postDetection(agent.enrollmentId, { ...createDetectionPayload(), severity: "invalid" });
 
-      // Wait 100ms to ensure timestamp difference
-      await new Promise((resolve) => setTimeout(resolve, 100));
+      expect(res.status).toBe(400);
+      expect(await prisma.detection.count()).toBe(0);
+    });
 
-      // Update last-seen
-      const updated = await prisma.agent.update({
-        where: { id: agent.id },
-        data: { lastSeen: new Date() },
-      });
+    it("stores a retried detection once when the agent resends it under the same Idempotency-Key", async () => {
+      const tenant = await createTestTenant();
+      const agent = await createTestAgent(tenant.id);
+      const payload = createDetectionPayload();
+      const key = { "Idempotency-Key": "b9628fc1-2134-4d4d-bbe6-83fdd1929d7a" };
 
-      expect(updated.lastSeen.getTime()).toBeGreaterThan(
-        oldLastSeen.getTime()
-      );
+      expect((await postDetection(agent.enrollmentId, payload, key)).status).toBe(200);
+      expect((await postDetection(agent.enrollmentId, payload, key)).status).toBe(200);
+
+      expect(await prisma.detection.count({ where: { agentId: agent.id } })).toBe(1);
+    });
+
+    it("refuses with 409 an Idempotency-Key reused for a different detection", async () => {
+      const tenant = await createTestTenant();
+      const agent = await createTestAgent(tenant.id);
+      const key = { "Idempotency-Key": "b9628fc1-2134-4d4d-bbe6-83fdd1929d7a" };
+
+      await postDetection(agent.enrollmentId, createDetectionPayload({ technique: "T1059" }), key);
+      const res = await postDetection(agent.enrollmentId, createDetectionPayload({ technique: "T1486" }), key);
+
+      expect(res.status).toBe(409);
+      expect(await prisma.detection.count({ where: { agentId: agent.id } })).toBe(1);
+    });
+
+    it("keeps the same Idempotency-Key from two agents apart", async () => {
+      const tenant = await createTestTenant();
+      const first = await createTestAgent(tenant.id);
+      const second = await createTestAgent(tenant.id);
+      const payload = createDetectionPayload();
+      const key = { "Idempotency-Key": "b9628fc1-2134-4d4d-bbe6-83fdd1929d7a" };
+
+      expect((await postDetection(first.enrollmentId, payload, key)).status).toBe(200);
+      expect((await postDetection(second.enrollmentId, payload, key)).status).toBe(200);
+
+      expect(await prisma.detection.count()).toBe(2);
     });
   });
 
   describe("POST /api/ingest/heartbeat", () => {
-    it("should update agent last-seen timestamp", async () => {
+    it("marks the agent alive and answers with its id and ring", async () => {
       const tenant = await createTestTenant();
-      const agent = await createTestAgent(tenant.id, "agent-heartbeat-001");
-
-      const oldLastSeen = agent.lastSeen;
-
-      // Wait 100ms
-      await new Promise((resolve) => setTimeout(resolve, 100));
-
-      // Update via heartbeat logic
-      const updated = await prisma.agent.update({
-        where: { enrollmentId: agent.enrollmentId },
-        data: { lastSeen: new Date() },
+      const agent = await createTestAgent(tenant.id, "agent-heartbeat-001", {
+        ring: "canary_0",
+        lastSeen: MINUTE_AGO(),
       });
 
-      expect(updated.lastSeen.getTime()).toBeGreaterThan(
-        oldLastSeen.getTime()
-      );
-      expect(updated.id).toBe(agent.id);
+      const res = await heartbeat(agentRequest("/api/ingest/heartbeat", agent.enrollmentId, {}));
+
+      expect(res.status).toBe(200);
+      expect(await res.json()).toMatchObject({ status: "ok", agentId: agent.id, ring: "canary_0" });
+      const after = await prisma.agent.findUniqueOrThrow({ where: { id: agent.id } });
+      expect(after.lastSeen.getTime()).toBeGreaterThan(agent.lastSeen.getTime());
     });
 
-    it("should fail for non-enrolled agent", async () => {
-      // Try to update non-existent agent
-      await expect(
-        prisma.agent.update({
-          where: { enrollmentId: "non-existent-agent" },
-          data: { lastSeen: new Date() },
-        })
-      ).rejects.toThrow();
-    });
-  });
+    it("refuses a certificate naming no enrolled agent with 403", async () => {
+      const res = await heartbeat(agentRequest("/api/ingest/heartbeat", "non-existent-agent", {}));
 
-  describe("GET /api/cron/detect-silent-agents", () => {
-    it("should detect agents with old last-seen timestamp", async () => {
-      const tenant = await createTestTenant();
-
-      // Create silent agent (6 minutes ago)
-      const silentAgent = await prisma.agent.create({
-        data: {
-          tenantId: tenant.id,
-          enrollmentId: "silent-agent",
-          lastSeen: new Date(Date.now() - 6 * 60 * 1000),
-        },
-      });
-
-      // Create active agent (1 minute ago)
-      const activeAgent = await prisma.agent.create({
-        data: {
-          tenantId: tenant.id,
-          enrollmentId: "active-agent",
-          lastSeen: new Date(Date.now() - 1 * 60 * 1000),
-        },
-      });
-
-      // Silent agent detection logic
-      const SILENCE_THRESHOLD_MS = 5 * 60 * 1000;
-      const threshold = new Date(Date.now() - SILENCE_THRESHOLD_MS);
-
-      const silentAgents = await prisma.agent.findMany({
-        where: {
-          lastSeen: { lt: threshold },
-        },
-      });
-
-      expect(silentAgents).toHaveLength(1);
-      expect(silentAgents[0].id).toBe(silentAgent.id);
-    });
-
-    it("should create case for silent agent", async () => {
-      const tenant = await createTestTenant();
-      const agent = await prisma.agent.create({
-        data: {
-          tenantId: tenant.id,
-          enrollmentId: "silent-agent-2",
-          hostname: "test-host-silent",
-          lastSeen: new Date(Date.now() - 10 * 60 * 1000),
-        },
-      });
-
-      // Create case
-      const caseRecord = await prisma.case.create({
-        data: {
-          tenantId: tenant.id,
-          title: `Agent Silent: ${agent.hostname}`,
-          description: `Agent has not sent heartbeat for >5 minutes. Last seen: ${agent.lastSeen.toISOString()}`,
-          severity: "high",
-          status: "open",
-        },
-      });
-
-      expect(caseRecord.title).toContain("Agent Silent");
-      expect(caseRecord.severity).toBe("high");
-      expect(caseRecord.status).toBe("open");
-    });
-
-    it("should not create duplicate cases for same silent agent", async () => {
-      const tenant = await createTestTenant();
-      const agent = await prisma.agent.create({
-        data: {
-          tenantId: tenant.id,
-          enrollmentId: "silent-agent-3",
-          hostname: "test-host-duplicate",
-          lastSeen: new Date(Date.now() - 10 * 60 * 1000),
-        },
-      });
-
-      // Create first case
-      await prisma.case.create({
-        data: {
-          tenantId: tenant.id,
-          title: `Agent Silent: ${agent.id}`,
-          severity: "high",
-          status: "open",
-        },
-      });
-
-      // Check for existing case
-      const existingCase = await prisma.case.findFirst({
-        where: {
-          tenantId: tenant.id,
-          title: { contains: agent.id },
-          status: "open",
-        },
-      });
-
-      expect(existingCase).not.toBeNull();
-
-      // Should not create second case
-      const caseCount = await prisma.case.count({
-        where: {
-          tenantId: tenant.id,
-          title: { contains: agent.id },
-          status: "open",
-        },
-      });
-
-      expect(caseCount).toBe(1);
+      expect(res.status).toBe(403);
     });
   });
 });
