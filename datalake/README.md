@@ -17,7 +17,7 @@ ground truth (partitioned by tenant/day/event-type, columnar format), a query en
 over it, and a hot recent window for interactive latency. Retention is per-tenant
 policy; deletion is provable (compliance is a feature).
 
-Design: [ADR-0041](../../docs/adr/0041-telemetry-lake-format-and-query-engine.md) (Parquet on object
+Design: ADR-0041 (Parquet on object
 storage, queried in process; status **proposed**, decisions taken under the owner's delegation).
 
 ## What is built (issue #77, first slice: the write path)

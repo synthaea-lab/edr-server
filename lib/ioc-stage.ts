@@ -4,7 +4,7 @@
  * entry that lists it.
  *
  * This is the step between a source (plain `kind:value` text, CSV, a STIX bundle or a MISP export) and the unsigned content
- * manifest the operator signs offline (docs/operations/content.md). It builds the feed with the
+ * manifest the operator signs offline. It builds the feed with the
  * same builder the device's rules come from, drops the lines the device would skip, and refuses
  * what would do harm if published:
  *

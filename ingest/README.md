@@ -5,7 +5,7 @@ uploaded events and detections, and tracks agent heartbeats (silence is a detect
 
 Routes (`server/app/api/`): `ingest/events` (batches of `schema::Event` from the agent
 spool), `ingest/heartbeat`, `ingest/detection`; events and heartbeat also have
-`/api/v1/ingest/` aliases. Contract: `docs/architecture/control-plane.md`. Events are counted
+`/api/v1/ingest/` aliases. Events are counted
 into fleet prevalence; they are kept only when the telemetry lake is on (`LAKE_DIR`, see
 `server/datalake/README.md`), otherwise they are not retained.
 

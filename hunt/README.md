@@ -33,7 +33,7 @@ detection stores, saved hunts, and scheduled hunts that page an analyst on new m
   prunes history.
 - **Graduation** (#618): `POST /api/hunts/[id]/graduate` (`lib/hunt-graduation.ts`) answers a
   draft Sigma rule and its samples file from the hunt's newest finished run, for a person to
-  review and open as a PR; see `docs/detection/detection-as-code.md`. It writes nothing. A hunt's
+  review and open as a PR in the rules repository. It writes nothing. A hunt's
   page has a "Draft Sigma rule" button (`components/GraduateHuntButton.tsx`) that calls it and
   shows the files to copy or download, and what a person still has to do. `{ kind: "ioc" }`
   (#934, `lib/hunt-ioc-draft.ts`, the "Draft IOC set" button) answers a draft feed file of the

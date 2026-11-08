@@ -4,8 +4,8 @@ name: Server
 # route handlers directly against a real database (#541, #552).
 #
 # Contract tests read the agent's schema/updater fixtures, the ML common-set golden
-# and the shipped IOC feeds: the job lays out the umbrella (server/ + agent/ + ml/ +
-# rules/) and sets SYNTHAEA_REQUIRE_SIBLINGS so none of them can silently skip.
+# and the shipped IOC feeds: the job checks the public repos out side by side (server/ +
+# agent/ + ml/ + rules/) and sets SYNTHAEA_REQUIRE_SIBLINGS so none of them can silently skip.
 
 on:
   push:

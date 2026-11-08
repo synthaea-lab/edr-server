@@ -1,14 +1,14 @@
 # server — Control Plane
 
-Part of the Synthaea umbrella ([synthaea-lab/edr](https://github.com/synthaea-lab/edr)),
-checked out at `<umbrella>/server`. Contract tests that read sibling repos (`agent`, `ml`,
-`rules`) resolve them through `tests/helpers/siblings.ts`: present → they run, absent →
+Part of Synthaea, alongside the public `edr-agent`, `edr-ml` and `edr-rules` repositories.
+Contract tests that read sibling repos (`agent`, `ml`, `rules`) resolve them through
+`tests/helpers/siblings.ts`: clone the repositories side by side as `agent/`, `server/`,
+`ml/` and `rules/` (or point `SYNTHAEA_ROOT` at their parent). Present → they run, absent →
 they skip with a notice (`SYNTHAEA_REQUIRE_SIBLINGS=1` turns that into a failure, as CI
-does). From the umbrella: `just test server`, `just up server`.
+does). Setup and local runs: `README-SETUP.md`.
 
-One modern Next.js (App Router, TypeScript) + PostgreSQL application — see
-[ADR-0001](../docs/adr/0001-server-stack-nextjs-postgres.md). Authentication and
-tenancy build on better-auth ([ADR-0003](../docs/adr/0003-better-auth-console.md)):
+One modern Next.js (App Router, TypeScript) + PostgreSQL application (ADR-0001). Authentication and
+tenancy build on better-auth (ADR-0003):
 organization = tenant, RBAC on member roles, tenant id first-class from the first
 migration; agent identity stays the mTLS enrollment PKI — the two never mix.
 
@@ -17,7 +17,7 @@ migration; agent identity stays the mTLS enrollment PKI — the two never mix.
 | `ingest/` | Agent-facing endpoints — event/detection upload, heartbeats; mTLS terminated in front (proxy/sidecar) |
 | `api/` | Management API — enrollment/PKI, policy distribution, fleet inventory, case queries, audit log |
 | `console/` | Analyst console — case-centric triage UI, fleet health, content/model distribution |
-| `ops/` | Fleet operations — agent health, observable-loss counters, ring rollout (halt and roll back from `/console/ops` for an owner or admin: `docs/operations/content.md`), ingest health |
+| `ops/` | Fleet operations — agent health, observable-loss counters, ring rollout (halt and roll back from `/console/ops` for an owner or admin), ingest health |
 | `integrations/` | SOAR/ticketing/paging — bidirectional case workflow (Jira, ServiceNow, PagerDuty, webhooks) |
 | `datalake/` | Telemetry lake — full-fidelity raw events, columnar/partitioned; substrate for cloud detection, hunting, graph/prevalence rebuilds, ML corpora |
 | `cloud-detection/` | Cloud-based detection: streaming on ingest, scheduled sweeps, and retrospective replay of new content over history |

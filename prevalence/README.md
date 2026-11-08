@@ -8,7 +8,7 @@ Planned shape:
 - Continuous counters from ingest: first-seen / last-seen / host-count per tenant for
   hashes (from enrich), image paths, parent→child transitions, and domains
 - **Feeds detection**: per-site rarity flows into T0/T1 features via the adaptation
-  loop (docs/detection/ml.md), and "first execution on the fleet" becomes a
+  loop, and "first execution on the fleet" becomes a
   correlator evidence type
 - **Feeds the console**: every hash/process in a case shows "seen on N hosts,
   first seen <date>" — the single most-used triage fact
@@ -35,7 +35,7 @@ Not built: publishing the snapshot to agents. The code lives with the rest of th
   observations of every uploaded event, aggregated per batch into one multi-row upsert,
   so counters see the fleet's full event stream and not just what alerted.
   `POST /api/ingest/detection` also records its event's observations. A counter failure
-  never rejects the request. See `docs/architecture/control-plane.md` for the contract.
+  never rejects the request.
 - **Read:** `GET /api/prevalence?kind=&key=` (session, tenant-scoped) returns
   `seen: false` for an unknown key.
 - **Console:** the case page shows, under each detection, "seen on N hosts, first
@@ -53,14 +53,14 @@ Not built: publishing the snapshot to agents. The code lives with the rest of th
   hosts, reporting `truncated` instead of dropping members past its limit) and
   `countReportingHosts` (a snapshot's `hosts_covered`) read the counters;
   `lib/common-set-snapshot.ts` builds the Bloom-filter bytes and parses them strictly, byte for
-  byte as `docs/detection/common-set-snapshot-format.md` and the golden fixture define. **Nothing
-  builds one on a schedule or serves it yet**: that is slices 5 and 6 of
-  `docs/detection/fleet-prevalence-snapshot-plan.md`, waiting on how a per-tenant snapshot is
+  byte as the format spec and the golden fixture define. **Nothing
+  builds one on a schedule or serves it yet**: that is the next slices of
+  the fleet-prevalence snapshot plan, waiting on how a per-tenant snapshot is
   signed and refreshed. The agent already loads a snapshot it finds in its content directory and
   adds a capped, weak "not in the common set" term to a process's belief.
 - **Checked end to end (2026-10-13/14):** two enrolled lab identities, a real sign-in, and the
   case page showing "seen on 1 host" for a transition one host ran and "seen on 2 hosts" for one
-  both ran (`lab/scenarios/prevalence-lineage.sh`).
+  both ran (a lab prevalence-lineage scenario).
 
 **Known limits:** the counters can be **recomputed and compared** from the lake
 (`lib/prevalence-rebuild.ts`, `server/datalake/README.md`), which proves the fold is a pure function
