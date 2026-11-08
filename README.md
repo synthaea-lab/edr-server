@@ -1,5 +1,11 @@
 # server — Control Plane
 
+Part of the Synthaea umbrella ([synthaea-lab/edr](https://github.com/synthaea-lab/edr)),
+checked out at `<umbrella>/server`. Contract tests that read sibling repos (`agent`, `ml`,
+`rules`) resolve them through `tests/helpers/siblings.ts`: present → they run, absent →
+they skip with a notice (`SYNTHAEA_REQUIRE_SIBLINGS=1` turns that into a failure, as CI
+does). From the umbrella: `just test server`, `just up server`.
+
 One modern Next.js (App Router, TypeScript) + PostgreSQL application — see
 [ADR-0001](../docs/adr/0001-server-stack-nextjs-postgres.md). Authentication and
 tenancy build on better-auth ([ADR-0003](../docs/adr/0003-better-auth-console.md)):
