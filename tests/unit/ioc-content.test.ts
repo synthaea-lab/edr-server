@@ -3,6 +3,7 @@ import { existsSync, readdirSync, readFileSync } from "fs";
 import path from "path";
 import { buildFeed, isValidFeedName } from "@/lib/ioc-feed";
 import { isPublicSuffix } from "@/lib/public-suffix";
+import { itWithSibling, siblingPath } from "../helpers/siblings";
 
 /**
  * Content check for `rules/ioc/` (#934, ADR-0038): every `*.txt` there is one feed, and it must be
@@ -10,7 +11,7 @@ import { isPublicSuffix } from "@/lib/public-suffix";
  * public-suffix check only the server can make, so this is the check the engine's own loader
  * (`crates/intel/tests/content.rs`) cannot do. Vacuous while the directory is empty.
  */
-const IOC_DIR = path.join(__dirname, "../../../rules/ioc");
+const IOC_DIR = siblingPath("rules", "ioc");
 
 /** The problems with one feed file; empty when it is fit to ship. */
 export function iocFileProblems(fileName: string, text: string): string[] {
@@ -49,9 +50,9 @@ describe("iocFileProblems", () => {
 });
 
 describe("rules/ioc", () => {
-  const files = existsSync(IOC_DIR) ? readdirSync(IOC_DIR).filter((f) => f !== "README.md") : [];
-
-  it("has every feed file fit to ship", () => {
+  // Needs the rules repo itself; an absent `ioc/` inside it is the vacuous case above.
+  itWithSibling("rules", "")("has every feed file fit to ship", () => {
+    const files = existsSync(IOC_DIR) ? readdirSync(IOC_DIR).filter((f) => f !== "README.md") : [];
     const problems = files.flatMap((file) => iocFileProblems(file, readFileSync(path.join(IOC_DIR, file), "utf8")));
     expect(problems).toEqual([]);
   });

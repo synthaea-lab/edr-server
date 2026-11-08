@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from "fs";
 import { join } from "path";
+import { itWithSibling, siblingPath } from "../helpers/siblings";
 
 // Route logic runs against a mocked Prisma client, so these need no database.
 const db = vi.hoisted(() => ({ agent: { findUnique: vi.fn() } }));
@@ -14,7 +15,8 @@ const SECRET = "test-proxy-secret";
 const HEX = (c: string) => c.repeat(64);
 
 /** The golden fixture the Rust side signs and verifies (`crates/updater`, #961). */
-const GOLDEN = join(__dirname, "../../../crates/updater/tests/fixtures/key-rotation-golden.json");
+const GOLDEN_REL = "crates/updater/tests/fixtures/key-rotation-golden.json";
+const GOLDEN = siblingPath("agent", GOLDEN_REL);
 
 function rotation(overrides: Record<string, unknown> = {}) {
   return {
@@ -102,7 +104,7 @@ describe("GET /api/release/key-rotation", () => {
     expect(Buffer.from(await res.arrayBuffer()).equals(bytes)).toBe(true);
   });
 
-  it("serves the Rust golden fixture's manifest exactly as signed", async () => {
+  itWithSibling("agent", GOLDEN_REL)("serves the Rust golden fixture's manifest exactly as signed", async () => {
     const golden = JSON.parse(readFileSync(GOLDEN, "utf-8")).manifest;
     const bytes = Buffer.from(JSON.stringify(golden, null, 2));
     store("canary_0", bytes);

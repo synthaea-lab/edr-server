@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "fs";
-import path from "path";
 import { createHash } from "crypto";
+import { hasSibling, siblingPath } from "../helpers/siblings";
 import {
   buildCommonSetSnapshot,
   parseCommonSetSnapshot,
@@ -30,12 +30,10 @@ type GoldenCase = {
   non_members: string[];
 };
 
-const golden: { format_version: number; cases: GoldenCase[] } = JSON.parse(
-  readFileSync(
-    path.join(__dirname, "../../../ml/tests/fixtures/common_set_snapshot_golden.json"),
-    "utf8"
-  )
-);
+const GOLDEN = "tests/fixtures/common_set_snapshot_golden.json";
+const golden: { format_version: number; cases: GoldenCase[] } = hasSibling("ml", GOLDEN)
+  ? JSON.parse(readFileSync(siblingPath("ml", GOLDEN), "utf8"))
+  : { format_version: 0, cases: [] };
 
 const toHex = (b: Uint8Array) => Buffer.from(b).toString("hex");
 const sha = (n: number) => n.toString(16).padStart(64, "0");
@@ -52,7 +50,7 @@ function build(c: GoldenCase) {
   });
 }
 
-describe("common-set snapshot against the golden fixture", () => {
+describe.skipIf(golden.cases.length === 0)("common-set snapshot against the golden fixture", () => {
   for (const c of golden.cases) {
     it(`builds the reference bytes: ${c.name}`, () => {
       expect(toHex(build(c))).toBe(c.bytes_hex);

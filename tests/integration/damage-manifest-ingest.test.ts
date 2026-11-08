@@ -4,6 +4,7 @@ import { existsSync, readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 import { cleanDatabase, createTestAgent, createTestCase, createTestTenant, prisma } from "../helpers/db";
 import { createMtlsHeaders, createTenantHeaders } from "../helpers/http";
+import { hasSibling, siblingPath } from "../helpers/siblings";
 import { POST as ingestDetection } from "@/app/api/ingest/detection/route";
 import { GET as getCase } from "@/app/api/cases/[id]/route";
 
@@ -15,7 +16,7 @@ import { GET as getCase } from "@/app/api/cases/[id]/route";
  * (`events` after the first), the route keeps the first in `event` and the rest in
  * `meta.additional_events`, and the case route turns them into `damageManifest`.
  */
-const FIXTURES = path.resolve(__dirname, "../../../crates/schema/tests/fixtures");
+const FIXTURES = siblingPath("agent", "crates/schema/tests/fixtures");
 const SECRET = "test-proxy-secret";
 
 /** The newest schema version's fixtures: the version moves, the shapes are the point. */
@@ -30,7 +31,7 @@ function rename(base: Record<string, any>, from: string, to: string, ns: number)
   return { ...base, meta: { ...base.meta, timestamp_ns: ns }, old_path: from, new_path: to };
 }
 
-describe("damage manifest through the ingest route (real database)", () => {
+describe.skipIf(!hasSibling("agent", "crates/schema/tests/fixtures"))("damage manifest through the ingest route (real database)", () => {
   beforeEach(async () => {
     process.env.NGINX_PROXY_SECRET = SECRET;
     await cleanDatabase();
