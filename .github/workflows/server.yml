@@ -59,7 +59,7 @@ jobs:
           persist-credentials: false
           # Everything the agent publishes for other repos to test against.
           sparse-checkout: |
-            /agent/src/sink.rs
+            /agent/src/sink/mod.rs
             /crates/*/tests/fixtures/
             /crates/*/data/
           sparse-checkout-cone-mode: false
@@ -128,7 +128,7 @@ jobs:
           persist-credentials: false
           # Everything the agent publishes for other repos to test against.
           sparse-checkout: |
-            /agent/src/sink.rs
+            /agent/src/sink/mod.rs
             /crates/*/tests/fixtures/
             /crates/*/data/
           sparse-checkout-cone-mode: false
