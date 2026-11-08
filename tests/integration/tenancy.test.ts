@@ -1,14 +1,24 @@
 import { describe, it, expect, beforeEach, afterAll } from "vitest";
+import { NextRequest } from "next/server";
 import {
   cleanDatabase,
-  createTestTenant,
   createTestAgent,
-  createTestDetection,
   createTestCase,
+  createTestDetection,
+  createTestTenant,
   prisma,
 } from "../helpers/db";
+import { createTenantHeaders } from "../helpers/http";
+import { GET as getAgent } from "@/app/api/agents/[agentId]/route";
+import { GET as listCases } from "@/app/api/cases/route";
+import { GET as getCase } from "@/app/api/cases/[id]/route";
+import { GET as ringHealth } from "@/app/api/rings/[ring]/health/route";
 
-describe("Tenancy Isolation", () => {
+/** A request carrying `tenantId` as the session's tenant, the way middleware forwards it. */
+const asTenant = (tenantId: string, path: string) =>
+  new NextRequest(`http://localhost${path}`, { headers: createTenantHeaders(tenantId) });
+
+describe("Tenancy isolation through the routes (real database)", () => {
   beforeEach(async () => {
     await cleanDatabase();
   });
@@ -18,109 +28,40 @@ describe("Tenancy Isolation", () => {
     await prisma.$disconnect();
   });
 
-  it("should isolate agents by tenant", async () => {
-    const tenant1 = await createTestTenant("Tenant A");
-    const tenant2 = await createTestTenant("Tenant B");
+  it("answers 404 for another tenant's agent", async () => {
+    const mine = await createTestTenant("Tenant A");
+    const other = await createTestTenant("Tenant B");
+    const theirs = await createTestAgent(other.id);
 
-    await createTestAgent(tenant1.id, "agent-a-1");
-    await createTestAgent(tenant1.id, "agent-a-2");
-    await createTestAgent(tenant2.id, "agent-b-1");
+    const res = await getAgent(asTenant(mine.id, `/api/agents/${theirs.id}`), { params: { agentId: theirs.id } });
 
-    const tenant1Agents = await prisma.agent.findMany({
-      where: { tenantId: tenant1.id },
-    });
-
-    const tenant2Agents = await prisma.agent.findMany({
-      where: { tenantId: tenant2.id },
-    });
-
-    expect(tenant1Agents).toHaveLength(2);
-    expect(tenant2Agents).toHaveLength(1);
+    expect(res.status).toBe(404);
   });
 
-  it("should isolate detections by tenant", async () => {
-    const tenant1 = await createTestTenant("Tenant A");
-    const tenant2 = await createTestTenant("Tenant B");
+  it("answers 404 for another tenant's case, and leaves it out of the case list", async () => {
+    const mine = await createTestTenant("Tenant A");
+    const other = await createTestTenant("Tenant B");
+    const myCase = await createTestCase(mine.id);
+    const theirCase = await createTestCase(other.id);
 
-    const agent1 = await createTestAgent(tenant1.id);
-    const agent2 = await createTestAgent(tenant2.id);
+    const detail = await getCase(asTenant(mine.id, `/api/cases/${theirCase.id}`), { params: { id: theirCase.id } });
+    const list = await listCases(asTenant(mine.id, "/api/cases"));
 
-    await createTestDetection(tenant1.id, agent1.id);
-    await createTestDetection(tenant1.id, agent1.id);
-    await createTestDetection(tenant2.id, agent2.id);
-
-    const tenant1Detections = await prisma.detection.findMany({
-      where: { tenantId: tenant1.id },
-    });
-
-    const tenant2Detections = await prisma.detection.findMany({
-      where: { tenantId: tenant2.id },
-    });
-
-    expect(tenant1Detections).toHaveLength(2);
-    expect(tenant2Detections).toHaveLength(1);
+    expect(detail.status).toBe(404);
+    expect(((await list.json()).cases as { id: string }[]).map((c) => c.id)).toEqual([myCase.id]);
   });
 
-  it("should isolate cases by tenant", async () => {
-    const tenant1 = await createTestTenant("Tenant A");
-    const tenant2 = await createTestTenant("Tenant B");
+  it("counts only the caller's tenant's agents and detections in ring health", async () => {
+    const mine = await createTestTenant("Tenant A");
+    const other = await createTestTenant("Tenant B");
+    const myAgent = await createTestAgent(mine.id);
+    const theirAgent = await createTestAgent(other.id);
+    await createTestDetection(mine.id, myAgent.id);
+    await createTestDetection(mine.id, myAgent.id);
+    await createTestDetection(other.id, theirAgent.id);
 
-    await createTestCase(tenant1.id);
-    await createTestCase(tenant1.id);
-    await createTestCase(tenant2.id);
+    const res = await ringHealth(asTenant(mine.id, "/api/rings/prod/health"), { params: { ring: "prod" } });
 
-    const tenant1Cases = await prisma.case.findMany({
-      where: { tenantId: tenant1.id },
-    });
-
-    const tenant2Cases = await prisma.case.findMany({
-      where: { tenantId: tenant2.id },
-    });
-
-    expect(tenant1Cases).toHaveLength(2);
-    expect(tenant2Cases).toHaveLength(1);
-  });
-
-  it("should cascade delete on tenant deletion", async () => {
-    const tenant = await createTestTenant();
-    const agent = await createTestAgent(tenant.id);
-    await createTestDetection(tenant.id, agent.id);
-    await createTestCase(tenant.id);
-
-    // Verify data exists
-    const beforeAgents = await prisma.agent.count({ where: { tenantId: tenant.id } });
-    const beforeDetections = await prisma.detection.count({ where: { tenantId: tenant.id } });
-    const beforeCases = await prisma.case.count({ where: { tenantId: tenant.id } });
-
-    expect(beforeAgents).toBe(1);
-    expect(beforeDetections).toBe(1);
-    expect(beforeCases).toBe(1);
-
-    // Delete tenant
-    await prisma.tenant.delete({ where: { id: tenant.id } });
-
-    // Verify cascade deletion
-    const afterAgents = await prisma.agent.count({ where: { tenantId: tenant.id } });
-    const afterDetections = await prisma.detection.count({ where: { tenantId: tenant.id } });
-    const afterCases = await prisma.case.count({ where: { tenantId: tenant.id } });
-
-    expect(afterAgents).toBe(0);
-    expect(afterDetections).toBe(0);
-    expect(afterCases).toBe(0);
-  });
-
-  it("should prevent cross-tenant data access", async () => {
-    const tenant1 = await createTestTenant("Tenant A");
-    const tenant2 = await createTestTenant("Tenant B");
-
-    const agent1 = await createTestAgent(tenant1.id);
-
-    // Try to query tenant2's agents - should be empty
-    const tenant2Agents = await prisma.agent.findMany({
-      where: { tenantId: tenant2.id },
-    });
-
-    expect(tenant2Agents).toHaveLength(0);
-    expect(tenant2Agents.map((a) => a.id)).not.toContain(agent1.id);
+    expect(await res.json()).toMatchObject({ totalAgents: 1, recentDetections: 2 });
   });
 });

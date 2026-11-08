@@ -1,12 +1,36 @@
 import { describe, it, expect, beforeEach, afterAll } from "vitest";
-import {
-  cleanDatabase,
-  createTestTenant,
-  createTestAgent,
-  prisma,
-} from "../helpers/db";
+import { NextRequest } from "next/server";
+import { cleanDatabase, createTestAgent, createTestMember, createTestTenant, prisma } from "../helpers/db";
+import { createTenantHeaders } from "../helpers/http";
+import { POST as assignRing } from "@/app/api/agents/[agentId]/ring/route";
+import { GET as ringAgents } from "@/app/api/rings/[ring]/agents/route";
+import { GET as ringHealth } from "@/app/api/rings/[ring]/health/route";
 
-describe("Canary Ring Infrastructure", () => {
+const minutesAgo = (n: number) => new Date(Date.now() - n * 60 * 1000);
+
+const assign = (caller: { tenantId: string; userId: string }, agentId: string, ring: string) =>
+  assignRing(
+    new NextRequest(`http://localhost/api/agents/${agentId}/ring`, {
+      method: "POST",
+      headers: createTenantHeaders(caller.tenantId, caller.userId),
+      body: JSON.stringify({ ring }),
+    }),
+    { params: { agentId } }
+  );
+
+const getRingAgents = (tenantId: string, ring: string, query = "") =>
+  ringAgents(
+    new NextRequest(`http://localhost/api/rings/${ring}/agents${query}`, { headers: createTenantHeaders(tenantId) }),
+    { params: { ring } }
+  );
+
+async function enrollmentIdsIn(tenantId: string, ring: string, query = "") {
+  const res = await getRingAgents(tenantId, ring, query);
+  expect(res.status).toBe(200);
+  return ((await res.json()).agents as { enrollmentId: string }[]).map((a) => a.enrollmentId).sort();
+}
+
+describe("Canary rings (real database)", () => {
   beforeEach(async () => {
     await cleanDatabase();
   });
@@ -16,338 +40,93 @@ describe("Canary Ring Infrastructure", () => {
     await prisma.$disconnect();
   });
 
-  describe("Ring Assignment", () => {
-    it("should assign agents to default 'prod' ring on enrollment", async () => {
-      const tenant = await createTestTenant("Test Tenant");
-      const agent = await createTestAgent(tenant.id, "agent-1");
+  describe("POST /api/agents/[agentId]/ring", () => {
+    it("moves an agent to another ring and audits the move", async () => {
+      const admin = await createTestMember();
+      const agent = await createTestAgent(admin.tenantId, "agent-1");
 
-      expect(agent.ring).toBe("prod");
+      const res = await assign(admin, agent.id, "canary_0");
+
+      expect(res.status).toBe(200);
+      expect(await res.json()).toMatchObject({ status: "ok", previousRing: "prod" });
+      expect(await enrollmentIdsIn(admin.tenantId, "canary_0")).toEqual(["agent-1"]);
+      expect(
+        await prisma.auditLog.count({ where: { tenantId: admin.tenantId, action: "agent.ring.assignment" } })
+      ).toBe(1);
     });
 
-    it("should allow updating agent ring assignment", async () => {
-      const tenant = await createTestTenant("Test Tenant");
-      const agent = await createTestAgent(tenant.id, "agent-1");
+    it("answers 404 for another tenant's agent and leaves it in its ring", async () => {
+      const admin = await createTestMember();
+      const other = await createTestTenant();
+      const theirs = await createTestAgent(other.id, "agent-other");
 
-      const updated = await prisma.agent.update({
-        where: { id: agent.id },
-        data: { ring: "canary_0" },
-      });
+      const res = await assign(admin, theirs.id, "canary_0");
 
-      expect(updated.ring).toBe("canary_0");
+      expect(res.status).toBe(404);
+      expect((await prisma.agent.findUniqueOrThrow({ where: { id: theirs.id } })).ring).toBe("prod");
     });
+  });
 
-    it("should query agents by ring", async () => {
-      const tenant = await createTestTenant("Test Tenant");
-
+  describe("GET /api/rings/[ring]/agents", () => {
+    it("lists the agents of one ring", async () => {
+      const tenant = await createTestTenant();
       await createTestAgent(tenant.id, "agent-prod-1", { ring: "prod" });
       await createTestAgent(tenant.id, "agent-prod-2", { ring: "prod" });
       await createTestAgent(tenant.id, "agent-canary-1", { ring: "canary_0" });
       await createTestAgent(tenant.id, "agent-canary-2", { ring: "canary_1" });
 
-      const prodAgents = await prisma.agent.findMany({
-        where: { tenantId: tenant.id, ring: "prod" },
-      });
-
-      const canary0Agents = await prisma.agent.findMany({
-        where: { tenantId: tenant.id, ring: "canary_0" },
-      });
-
-      expect(prodAgents).toHaveLength(2);
-      expect(canary0Agents).toHaveLength(1);
+      expect(await enrollmentIdsIn(tenant.id, "prod")).toEqual(["agent-prod-1", "agent-prod-2"]);
+      expect(await enrollmentIdsIn(tenant.id, "canary_0")).toEqual(["agent-canary-1"]);
     });
 
-    it("should isolate ring queries by tenant", async () => {
+    it("lists only the caller's tenant's agents", async () => {
       const tenant1 = await createTestTenant("Tenant A");
       const tenant2 = await createTestTenant("Tenant B");
-
       await createTestAgent(tenant1.id, "agent-a", { ring: "canary_0" });
       await createTestAgent(tenant2.id, "agent-b", { ring: "canary_0" });
 
-      const tenant1Canary = await prisma.agent.findMany({
-        where: { tenantId: tenant1.id, ring: "canary_0" },
-      });
+      expect(await enrollmentIdsIn(tenant1.id, "canary_0")).toEqual(["agent-a"]);
+      expect(await enrollmentIdsIn(tenant2.id, "canary_0")).toEqual(["agent-b"]);
+    });
 
-      const tenant2Canary = await prisma.agent.findMany({
-        where: { tenantId: tenant2.id, ring: "canary_0" },
-      });
+    it("splits healthy from silent agents at five minutes", async () => {
+      const tenant = await createTestTenant();
+      await createTestAgent(tenant.id, "agent-fresh", { ring: "canary_0", lastSeen: minutesAgo(1) });
+      await createTestAgent(tenant.id, "agent-silent", { ring: "canary_0", lastSeen: minutesAgo(10) });
 
-      expect(tenant1Canary).toHaveLength(1);
-      expect(tenant2Canary).toHaveLength(1);
-      expect(tenant1Canary[0].id).not.toBe(tenant2Canary[0].id);
+      expect(await enrollmentIdsIn(tenant.id, "canary_0", "?status=healthy")).toEqual(["agent-fresh"]);
+      expect(await enrollmentIdsIn(tenant.id, "canary_0", "?status=silent")).toEqual(["agent-silent"]);
+    });
+
+    it("refuses an unknown ring with 400", async () => {
+      const tenant = await createTestTenant();
+
+      expect((await getRingAgents(tenant.id, "canary_9")).status).toBe(400);
     });
   });
 
-  describe("Content Releases", () => {
-    it("should create content release for ring", async () => {
-      const tenant = await createTestTenant("Test Tenant");
+  describe("GET /api/rings/[ring]/health", () => {
+    it("counts healthy and silent agents in the ring", async () => {
+      const tenant = await createTestTenant();
+      await createTestAgent(tenant.id, "agent-healthy-1", { ring: "canary_0", lastSeen: new Date() });
+      await createTestAgent(tenant.id, "agent-healthy-2", { ring: "canary_0", lastSeen: minutesAgo(4) });
+      await createTestAgent(tenant.id, "agent-silent-1", { ring: "canary_0", lastSeen: minutesAgo(10) });
+      await createTestAgent(tenant.id, "agent-elsewhere", { ring: "prod", lastSeen: minutesAgo(10) });
 
-      const release = await prisma.contentRelease.create({
-        data: {
-          tenantId: tenant.id,
-          ring: "canary_0",
-          releaseVersion: 1,
-          manifestUrl: "https://example.com/manifests/content-canary_0-v1.json",
-          manifestSha256: "a".repeat(64),
-          releasedAt: new Date(),
-        },
+      const res = await ringHealth(
+        new NextRequest("http://localhost/api/rings/canary_0/health", { headers: createTenantHeaders(tenant.id) }),
+        { params: { ring: "canary_0" } }
+      );
+
+      expect(res.status).toBe(200);
+      expect(await res.json()).toMatchObject({
+        ring: "canary_0",
+        totalAgents: 3,
+        healthyAgents: 2,
+        silentAgents: 1,
+        silentRate: 0.33,
+        healthStatus: "unhealthy",
       });
-
-      expect(release.ring).toBe("canary_0");
-      expect(release.releaseVersion).toBe(1);
-      expect(release.status).toBe("active");
-    });
-
-    it("should enforce unique constraint on tenant + ring + version", async () => {
-      const tenant = await createTestTenant("Test Tenant");
-
-      await prisma.contentRelease.create({
-        data: {
-          tenantId: tenant.id,
-          ring: "canary_0",
-          releaseVersion: 1,
-          manifestUrl: "https://example.com/manifest-v1.json",
-          manifestSha256: "a".repeat(64),
-          releasedAt: new Date(),
-        },
-      });
-
-      // Attempt duplicate
-      await expect(
-        prisma.contentRelease.create({
-          data: {
-            tenantId: tenant.id,
-            ring: "canary_0",
-            releaseVersion: 1,
-            manifestUrl: "https://example.com/manifest-v1-dup.json",
-            manifestSha256: "b".repeat(64),
-            releasedAt: new Date(),
-          },
-        })
-      ).rejects.toThrow();
-    });
-
-    it("should query latest release for ring", async () => {
-      const tenant = await createTestTenant("Test Tenant");
-
-      // Create multiple releases
-      await prisma.contentRelease.create({
-        data: {
-          tenantId: tenant.id,
-          ring: "canary_0",
-          releaseVersion: 1,
-          manifestUrl: "https://example.com/v1.json",
-          manifestSha256: "a".repeat(64),
-          releasedAt: new Date("2026-09-20"),
-        },
-      });
-
-      await prisma.contentRelease.create({
-        data: {
-          tenantId: tenant.id,
-          ring: "canary_0",
-          releaseVersion: 2,
-          manifestUrl: "https://example.com/v2.json",
-          manifestSha256: "b".repeat(64),
-          releasedAt: new Date("2026-09-21"),
-        },
-      });
-
-      await prisma.contentRelease.create({
-        data: {
-          tenantId: tenant.id,
-          ring: "canary_0",
-          releaseVersion: 3,
-          manifestUrl: "https://example.com/v3.json",
-          manifestSha256: "c".repeat(64),
-          releasedAt: new Date("2026-09-22"),
-        },
-      });
-
-      // Query latest
-      const latest = await prisma.contentRelease.findFirst({
-        where: {
-          tenantId: tenant.id,
-          ring: "canary_0",
-          status: "active",
-        },
-        orderBy: { releaseVersion: "desc" },
-      });
-
-      expect(latest?.releaseVersion).toBe(3);
-    });
-
-    it("should isolate content releases by tenant", async () => {
-      const tenant1 = await createTestTenant("Tenant A");
-      const tenant2 = await createTestTenant("Tenant B");
-
-      await prisma.contentRelease.create({
-        data: {
-          tenantId: tenant1.id,
-          ring: "prod",
-          releaseVersion: 10,
-          manifestUrl: "https://example.com/t1.json",
-          manifestSha256: "a".repeat(64),
-          releasedAt: new Date(),
-        },
-      });
-
-      await prisma.contentRelease.create({
-        data: {
-          tenantId: tenant2.id,
-          ring: "prod",
-          releaseVersion: 5,
-          manifestUrl: "https://example.com/t2.json",
-          manifestSha256: "b".repeat(64),
-          releasedAt: new Date(),
-        },
-      });
-
-      const tenant1Latest = await prisma.contentRelease.findFirst({
-        where: { tenantId: tenant1.id, ring: "prod" },
-        orderBy: { releaseVersion: "desc" },
-      });
-
-      const tenant2Latest = await prisma.contentRelease.findFirst({
-        where: { tenantId: tenant2.id, ring: "prod" },
-        orderBy: { releaseVersion: "desc" },
-      });
-
-      expect(tenant1Latest?.releaseVersion).toBe(10);
-      expect(tenant2Latest?.releaseVersion).toBe(5);
-    });
-  });
-
-  describe("Ring Status Updates", () => {
-    it("should mark release as halted", async () => {
-      const tenant = await createTestTenant("Test Tenant");
-
-      const release = await prisma.contentRelease.create({
-        data: {
-          tenantId: tenant.id,
-          ring: "canary_0",
-          releaseVersion: 1,
-          manifestUrl: "https://example.com/v1.json",
-          manifestSha256: "a".repeat(64),
-          releasedAt: new Date(),
-        },
-      });
-
-      const halted = await prisma.contentRelease.update({
-        where: { id: release.id },
-        data: { status: "halted" },
-      });
-
-      expect(halted.status).toBe("halted");
-    });
-
-    it("should support rollback workflow", async () => {
-      const tenant = await createTestTenant("Test Tenant");
-
-      // Create v1 and v2
-      const v1 = await prisma.contentRelease.create({
-        data: {
-          tenantId: tenant.id,
-          ring: "canary_0",
-          releaseVersion: 1,
-          manifestUrl: "https://example.com/v1.json",
-          manifestSha256: "a".repeat(64),
-          releasedAt: new Date("2026-09-20"),
-          status: "active",
-        },
-      });
-
-      const v2 = await prisma.contentRelease.create({
-        data: {
-          tenantId: tenant.id,
-          ring: "canary_0",
-          releaseVersion: 2,
-          manifestUrl: "https://example.com/v2.json",
-          manifestSha256: "b".repeat(64),
-          releasedAt: new Date("2026-09-21"),
-          status: "active",
-        },
-      });
-
-      // Simulate rollback: mark v2 as rolled_back, reactivate v1
-      await prisma.contentRelease.update({
-        where: { id: v2.id },
-        data: { status: "rolled_back" },
-      });
-
-      await prisma.contentRelease.update({
-        where: { id: v1.id },
-        data: { status: "active" },
-      });
-
-      // Query latest active
-      const latest = await prisma.contentRelease.findFirst({
-        where: {
-          tenantId: tenant.id,
-          ring: "canary_0",
-          status: "active",
-        },
-        orderBy: { releaseVersion: "desc" },
-      });
-
-      expect(latest?.releaseVersion).toBe(1);
-    });
-  });
-
-  describe("Ring Health Metrics", () => {
-    it("should count healthy vs silent agents in ring", async () => {
-      const tenant = await createTestTenant("Test Tenant");
-
-      // Create agents with different last-seen timestamps
-      const now = new Date();
-      const fiveMinutesAgo = new Date(now.getTime() - 5 * 60 * 1000);
-      const tenMinutesAgo = new Date(now.getTime() - 10 * 60 * 1000);
-
-      await prisma.agent.create({
-        data: {
-          tenantId: tenant.id,
-          enrollmentId: "agent-healthy-1",
-          ring: "canary_0",
-          lastSeen: now,
-          createdAt: now,
-        },
-      });
-
-      await prisma.agent.create({
-        data: {
-          tenantId: tenant.id,
-          enrollmentId: "agent-healthy-2",
-          ring: "canary_0",
-          lastSeen: fiveMinutesAgo,
-          createdAt: now,
-        },
-      });
-
-      await prisma.agent.create({
-        data: {
-          tenantId: tenant.id,
-          enrollmentId: "agent-silent-1",
-          ring: "canary_0",
-          lastSeen: tenMinutesAgo,
-          createdAt: now,
-        },
-      });
-
-      // Count healthy (last-seen within 5 minutes)
-      const silenceThreshold = new Date(now.getTime() - 5 * 60 * 1000);
-      const healthy = await prisma.agent.count({
-        where: {
-          tenantId: tenant.id,
-          ring: "canary_0",
-          lastSeen: { gte: silenceThreshold },
-        },
-      });
-
-      const total = await prisma.agent.count({
-        where: { tenantId: tenant.id, ring: "canary_0" },
-      });
-
-      expect(total).toBe(3);
-      expect(healthy).toBe(2);
     });
   });
 });

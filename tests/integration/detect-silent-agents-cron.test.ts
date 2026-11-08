@@ -44,6 +44,17 @@ describe("GET /api/cron/detect-silent-agents", () => {
     expect(titles.filter((t) => t === "Agent Silent: web-01")).toHaveLength(1);
   });
 
+  it("leaves an agent seen within the last five minutes alone", async () => {
+    const tenant = await createTestTenant();
+    await createTestAgent(tenant.id, "enroll-silent", { lastSeen: new Date(Date.now() - 6 * 60 * 1000) });
+    await createTestAgent(tenant.id, "enroll-active", { lastSeen: new Date(Date.now() - 1 * 60 * 1000) });
+
+    const res = await GET(cronRequest());
+
+    expect(await res.json()).toMatchObject({ silentAgents: 1, casesCreated: 1 });
+    expect(await prisma.case.count({ where: { tenantId: tenant.id } })).toBe(1);
+  });
+
   it("opens a new case once the previous one is resolved", async () => {
     const tenant = await createTestTenant();
     await createTestAgent(tenant.id, "enroll-named", { hostname: "web-01", lastSeen: HOUR_AGO() });

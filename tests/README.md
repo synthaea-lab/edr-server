@@ -90,9 +90,16 @@ npm run test:ui
 
 ### Integration Tests
 
-- ✅ `tests/integration/ingest.test.ts` - Detection upload, heartbeat, silence detection
-- ✅ `tests/integration/api.test.ts` - Enrollment, case queries
-- ✅ `tests/integration/tenancy.test.ts` - Multi-tenant isolation
+Integration tests call the route handlers (`app/api/**/route.ts`) against a real database. A few
+examples:
+
+- ✅ `tests/integration/enrollment.test.ts` - `POST /api/enrollment`
+- ✅ `tests/integration/cases-list.test.ts` - `GET /api/cases`
+- ✅ `tests/integration/ingest.test.ts` - Detection upload, heartbeat
+- ✅ `tests/integration/detect-silent-agents-cron.test.ts` - Silence detection
+- ✅ `tests/integration/rings.test.ts` - Ring assignment, ring agents and health
+- ✅ `tests/integration/tenancy.test.ts` - Multi-tenant isolation across routes
+- ✅ `tests/integration/schema-constraints.test.ts` - Database constraints the routes rely on
 
 ### E2E Tests
 
