@@ -35,7 +35,7 @@ npx prisma generate
 Run these before you open a pull request:
 
 ```bash
-npm run typecheck
+npx tsc --noEmit
 npm run lint
 npx vitest run tests/unit
 ```

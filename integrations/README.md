@@ -10,7 +10,7 @@ A tenant admin registers a signed HTTPS webhook at `/console/notifications` (API
 `hunt.new_matches` go through an outbox and are sent by the `deliver-notifications` scheduled job,
 at least once. A message points to the console and carries no detection contents. The server
 needs `NOTIFY_SECRET_KEY` to store channel secrets; see
-[README-SETUP.md](../README-SETUP.md#notifications).
+[configuration](../docs/configuration.md#notifications).
 
 A receiver must:
 
