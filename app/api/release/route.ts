@@ -2,8 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { requireTenantAdmin, requireTenantMember } from "@/lib/admin-auth";
-import { loadReleaseArtifact, loadReleaseManifest } from "@/lib/release-manifest";
-import { recordAudit } from "@/lib/audit";
+import { publishRelease } from "@/lib/release-publish";
+import { publishResponse } from "@/lib/http/publish-response";
 
 const CreateReleaseSchema = z.object({
   ring: z.enum(["canary_0", "canary_1", "canary_2", "prod"]),
@@ -40,81 +40,9 @@ export async function POST(req: NextRequest) {
         { status: 400 }
       );
     }
-    const { ring, releaseVersion, manifestUrl, manifestSha256, releasedAt } = validation.data;
-
-    const latest = await prisma.binaryRelease.findFirst({
-      where: { tenantId, ring },
-      orderBy: { releaseVersion: "desc" },
-    });
-    if (latest && releaseVersion <= latest.releaseVersion) {
-      return NextResponse.json(
-        {
-          error: "releaseVersion must be greater than the ring's latest release",
-          latest: latest.releaseVersion,
-        },
-        { status: 409 }
-      );
-    }
-
-    const loaded = await loadReleaseManifest({
-      id: "(unpublished)",
-      manifestUrl,
-      manifestSha256,
-      releaseVersion,
-    });
-    if (!loaded.ok) {
-      return NextResponse.json({ error: loaded.error }, { status: 422 });
-    }
-    for (const [entryPath, sha256] of Object.entries(loaded.manifest.entries)) {
-      const artifact = await loadReleaseArtifact(releaseVersion, entryPath, sha256);
-      if (!artifact.ok) {
-        return NextResponse.json(
-          { error: `Artifact ${JSON.stringify(entryPath)}: ${artifact.error}` },
-          { status: 422 }
-        );
-      }
-    }
-
-    // The release and its audit row commit together: a release never goes out unaudited.
-    let release;
-    try {
-      release = await prisma.$transaction(async (tx) => {
-        const created = await tx.binaryRelease.create({
-          data: {
-            tenantId,
-            ring,
-            releaseVersion,
-            manifestUrl,
-            manifestSha256,
-            status: "active",
-            releasedAt: releasedAt ? new Date(releasedAt) : new Date(),
-          },
-        });
-        await recordAudit(tx, {
-          tenantId,
-          userId,
-          action: "release.create",
-          resource: `binary_releases/${created.id}`,
-          details: {
-            ring,
-            releaseVersion,
-            manifestUrl,
-            entries: Object.keys(loaded.manifest.entries).length,
-          },
-        });
-        return created;
-      });
-    } catch (error) {
-      if ((error as { code?: string }).code === "P2002") {
-        return NextResponse.json(
-          { error: "A release with this version already exists for the ring" },
-          { status: 409 }
-        );
-      }
-      throw error;
-    }
-
-    return NextResponse.json({ status: "created", release });
+    return publishResponse(
+      await publishRelease(prisma, { kind: "binary", tenantId, userId, ...validation.data })
+    );
   } catch (error) {
     console.error("Binary release creation error:", error);
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });
