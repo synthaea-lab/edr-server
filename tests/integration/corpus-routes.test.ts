@@ -209,6 +209,44 @@ describe("POST /api/corpus/submit", () => {
     });
     expect(await prisma.corpusSample.count()).toBe(0);
   });
+
+  it("puts concurrent first submits of a version into one row", async () => {
+    const tenant = await createTestTenant();
+    const ids = ["e-c1", "e-c2", "e-c3", "e-c4", "e-c5"];
+    for (const id of ids) await createTestAgent(tenant.id, id);
+
+    const responses = await Promise.all(
+      ids.map((id) => submitReq(id, { corpusVersion: 7, samples: [sample("2026-01-01T00:00:00Z")] }))
+    );
+
+    expect(responses.map((r) => r.status)).toEqual([200, 200, 200, 200, 200]);
+    const totals = await Promise.all(responses.map(async (r) => (await r.json()).totalSamples));
+    expect([...totals].sort()).toEqual([1, 2, 3, 4, 5]);
+    const version = await prisma.corpusVersion.findFirstOrThrow();
+    expect(await prisma.corpusVersion.count()).toBe(1);
+    expect(version.sampleCount).toBe(5);
+    expect(await prisma.corpusSample.count({ where: { corpusVersionId: version.id } })).toBe(5);
+  });
+
+  it("refuses a submit that waited on a finalize holding the version with 409", async () => {
+    const tenant = await createTestTenant();
+    await createTestAgent(tenant.id, "e-race");
+    const version = await corpusVersion(tenant.id, 1);
+
+    let submitted!: Promise<Response>;
+    await prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT id FROM corpus_versions WHERE id = ${version.id} FOR UPDATE`;
+      submitted = submitReq("e-race", { corpusVersion: 1, samples: [sample("2026-01-01T00:00:00Z")] });
+      // Let the submit read the version before the finalize commits.
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      await tx.corpusVersion.update({ where: { id: version.id }, data: { status: "finalized" } });
+    });
+    const res = await submitted;
+
+    expect(res.status).toBe(409);
+    expect(await prisma.corpusSample.count()).toBe(0);
+    expect((await prisma.corpusVersion.findFirstOrThrow()).sampleCount).toBe(0);
+  });
 });
 
 describe("POST /api/corpus/finalize", () => {
@@ -391,10 +429,10 @@ describe("GET /api/corpus/versions", () => {
     expect(await res.json()).toEqual({ error: "Internal server error" });
   });
 
-  it("answers a caller with no tenant context with 500 (current behavior, see SV-004)", async () => {
+  it("refuses a caller with no tenant context with 401", async () => {
     const res = await listVersions(versionsReq("", {}));
 
-    expect(res.status).toBe(500);
-    expect(await res.json()).toEqual({ error: "Internal server error" });
+    expect(res.status).toBe(401);
+    expect(await res.json()).toEqual({ error: "Authentication required" });
   });
 });
