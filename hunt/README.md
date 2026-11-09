@@ -1,60 +1,40 @@
-# server/hunt — Threat Hunting
+# Threat hunting
 
-Analyst-driven hunting over fleet telemetry: ad-hoc queries across the event and
-detection stores, saved hunts, and scheduled hunts that page an analyst on new matches.
+Analyst-driven hunting: ad-hoc searches over detections, cases and the telemetry archive, saved
+hunts with a schedule and a result history, and drafts of detection content built from what a hunt
+found.
 
-## Built (issue #61, slice 1; ADR-0025, proposed)
+## Built
 
-- **Saved hunts** (`Hunt`, `HuntRun` in `prisma/schema.prisma`): a structured, versioned
-  `HuntQuery` over the tenant's detections, an owner, an optional schedule, and a result
-  history. Code: `lib/hunt.ts` (validate, compile, run), `lib/hunt-input.ts` (request bodies).
-- **API** (session, tenant-scoped): `GET/POST /api/hunts`, `GET/PATCH/DELETE /api/hunts/[id]`,
-  `POST /api/hunts/[id]/run`.
-- **Search** (read-only, session, tenant-scoped): `POST /api/hunts/search` (`{ source?, query,
-  cursor? }`: one page of detections for a `HuntQuery`, or of cases for a `CaseQuery` with
-  `kind: "cases"`) and `GET /api/hunts/[id]/matches?cursor=` (what a saved hunt's query matches
-  now; it records no run). `lib/hunt-search.ts`: 50 rows a page, newest first, keyset cursor
-  over (time, id), the count on the first page; the statement timeout of a run (a 504); at most
-  2 searches in flight per tenant across server instances (a 429), by advisory locks in
-  Postgres. A row has ids, times, technique, severity, the case title and the rule title, never
-  the rest of the stored event. The console has `/console/hunts/search` (a GET form, so a search
-  is a link) and `/console/hunts/[id]/matches`.
-- **Event archive search** (#933, ADR-0025 point 10): `POST /api/hunts/search` with
-  `{ source: "events", query }`, `query` an `EventQuery` (`lib/hunt-events.ts`: `kind: "events"`,
-  `lastDays` 1 to 90, `types`, `where` on `agentId`, `comm`, `path`, `imagePath`, `daddr`, `query`,
-  `sha256`; no tenant field). `lib/hunt-events-search.ts` reads the telemetry lake through
-  `queryLake`: the newest 50 events, typed columns only (never the event's text), no cursor
-  (`truncated` and `incomplete` say when the answer is cut), a 10 s deadline (a 504), the same two
-  searches in flight per tenant as the other sources (a 429), a 503 while the lake is off, and a 501 when the lake is on but its store has no reader
-  (none is in that case now: `LAKE_DIR` and `LAKE_S3_BUCKET` both have one, #1105). The tenant is the session's alone. No console page, no saved hunt over
-  events.
-- **Server-only part** (`lib/hunt-runner.ts`): `runHunt`, `runHuntWithinLimit`, `dueHunts`, `pruneHuntRuns`. They reach the notification outbox (`node:crypto`), so they live apart from `lib/hunt.ts`, which client components import (the form, `lib/hunt-view.ts`). `tests/unit/client-bundle-imports.test.ts` fails when a `"use client"` file reaches a Node built-in or Prisma (#926).
-- **Scheduler**: `GET /api/cron/run-hunts` (CRON_SECRET) runs the due scheduled hunts and
-  prunes history.
-- **Graduation** (#618): `POST /api/hunts/[id]/graduate` (`lib/hunt-graduation.ts`) answers a
-  draft Sigma rule and its samples file from the hunt's newest finished run, for a person to
-  review and open as a PR in the rules repository. It writes nothing. A hunt's
-  page has a "Draft Sigma rule" button (`components/GraduateHuntButton.tsx`) that calls it and
-  shows the files to copy or download, and what a person still has to do. `{ kind: "ioc" }`
-  (#934, `lib/hunt-ioc-draft.ts`, the "Draft IOC set" button) answers a draft feed file of the
-  hashes, addresses and (public-suffix-checked) domains the matches carry, in the `crates/intel` line format, each hash and domain commented with its fleet prevalence.
-- **Console** (`/console/hunts`): the list (with a Delete button per hunt: it asks first, and
-  the run history goes with the hunt), a hunt's run history with Run now, and a create
-  and edit form (`/console/hunts/new`, `/console/hunts/[id]/edit`). The form turns its fields
-  into the API body with `lib/hunt-form.ts`, which runs the same validation as the API. The
-  list reads each hunt's newest run and its newest run with a result in one query
-  (`lib/hunt-runs.ts`, two lateral index lookups per hunt); numbers from an older run than the
-  newest say which run they come from. The edit page warns when the stored query no longer
-  parses, because saving replaces it with the form's. A "Running" run turns "Did not finish"
-  after three transaction timeouts plus a margin (`RUNNING_GRACE_MS`). Both client buttons treat
-  a redirect to the sign-in page as an expired session, not as success.
-- The query is **not SQL**: `lastHours`, `techniques`, `severities`, `agentIds`, `text`.
+- **Saved hunts.** A structured, versioned query over the tenant's detections (`lastHours`,
+  `techniques`, `severities`, `agentIds`, `text`; not SQL), with an owner, an optional schedule and
+  a run history. API: `GET`/`POST /api/hunts`, `GET`/`PATCH`/`DELETE /api/hunts/[id]`,
+  `POST /api/hunts/[id]/run`. The `run-hunts` scheduled job runs the hunts that are due and prunes
+  old runs.
+- **Search.** `POST /api/hunts/search` returns one page of detections, of cases (`kind: "cases"`)
+  or of archived events (`source: "events"`). Detection and case searches return 50 rows a page,
+  newest first, with a keyset cursor. Each tenant has at most two searches in flight across server
+  instances (`429` past that), and a search that runs too long answers `504`. A row carries ids,
+  times, technique, severity, the case title and the rule title, never the rest of the stored
+  event. `GET /api/hunts/[id]/matches` shows what a saved hunt matches now without recording a run.
+- **Event archive search.** With `source: "events"`, the search reads the
+  [telemetry archive](../datalake/README.md): up to 90 days, filtered by event type and exact
+  matches on `agentId`, `comm`, `path`, `imagePath`, `daddr`, `query` and `sha256`. It returns the
+  newest 50 events, typed columns only, within a 10-second deadline, and answers `503` while the
+  archive is off.
+- **Graduation.** `POST /api/hunts/[id]/graduate` drafts a Sigma rule and its samples file from
+  the hunt's latest finished run, for a person to review and propose to the
+  [rules](https://github.com/synthaea-lab/rules) repository. With `{ "kind": "ioc" }` it drafts an
+  IOC feed file of the hashes, addresses and domains in the matches, each annotated with its fleet
+  prevalence. Nothing is written server-side.
+- **Console.** `/console/hunts` lists hunts with their latest results; hunts can be created,
+  edited, run, deleted and graduated from there, and `/console/hunts/search` runs ad-hoc searches.
 
-## Not built yet
+## Not built
 
-- Notification on new matches (a run records `newMatchCount`; nothing is sent).
-- Over the raw event archive (the ad-hoc search above exists): saved hunts and their runs, a cursor,
-  the event's text in a row, a console page.
-- Graduation beyond the assisted drafts: the PR opened from the server, a YARA draft, a selection built from the raw archive.
-- Live endpoint queries (ask one host "what is running right now?") ride the
-  `response::live` channel with its policy gates, not a separate mechanism.
+- Saved hunts over the event archive, a cursor over it, and a console page for it.
+- Opening the rules pull request from the server, and YARA drafts.
+- Live queries to an endpoint, which will use the agent's live-response channel.
+
+Code: `lib/hunt*.ts`, `app/api/hunts/`, `app/console/hunts/`, `components/*Hunt*.tsx`. Tests:
+`tests/integration/hunts.test.ts`, `hunt-search.test.ts`, `notify-hunt-matches.test.ts`.

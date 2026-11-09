@@ -1,30 +1,26 @@
-# server/assistant — Analyst AI Assistant
+# Analyst assistant
 
-Server-side LLM assistance for the analyst, built on one grounding rule:
-**the LLM narrates and navigates structured evidence; it never
-scores, never judges, never runs on the endpoint.**
+Server-side LLM assistance for the analyst, under one rule: **the model narrates and navigates
+structured evidence; it never scores, never judges and never runs on the endpoint.**
 
-Planned capabilities, in trust order:
-1. **Case narratives** — generate the human-readable story of a case from its
-   evidence graph (detections + attributions + timeline), with every claim linked to
-   the underlying record; regenerated on evidence change.
-2. **Natural-language navigation** — "show hosts where this hash ran last week"
-   compiled to hunt/graph queries the analyst can see and edit before running.
-3. **Triage drafting** — suggested next steps and draft disruption playbook choices,
-   always as proposals requiring the analyst's action; the assistant holds no
-   execution authority of its own.
+**Built: case narratives.** From a case page, an analyst generates the readable story of the case.
+`evidence-graph.ts` builds an allowlisted evidence graph from the case's detections, `llm-client.ts`
+sends it to an OpenAI-compatible chat-completions endpoint (a self-hosted Ollama by default, see the
+`LLM_*` variables in [README-SETUP.md](../README-SETUP.md#case-narratives)), and `prompt.ts` holds
+the versioned system prompt. Every claim cites the record it comes from, the output is labeled with
+its provider, and a narrative is marked stale when the case's evidence changes.
 
-Constraints: assistant output is visibly labeled, grounded citations are mandatory,
-prompts/outputs land in the audit log, and tenant data never trains shared models.
+Cases themselves come from the `group-detections` scheduled job, a server-side heuristic: detections
+of the same agent within 30 minutes and with related MITRE ATT&CK techniques form one case.
 
-## Status
+Planned:
 
-Capability 1 (case narratives) is implemented (issue #50): `evidence-graph.ts` builds
-the allowlisted evidence graph a case's grouped detections project into,
-`llm-client.ts` narrates it against an OpenAI-compatible endpoint (ADR-0017,
-self-hosted by default), `prompt.ts` holds the versioned system prompt. Detections are
-grouped into cases by the `group-detections` cron sweep
-(`app/api/cron/group-detections/route.ts`) — a server-side heuristic (same agent,
-30-minute window, related MITRE technique), standing in for the correlator-side
-`case_id`/attribution plumbing that doesn't exist yet (tracked as a follow-up issue).
-Capabilities 2 and 3 are not started.
+- **Natural-language navigation.** A question such as "hosts where this hash ran last week",
+  compiled to a hunt or graph query the analyst sees and edits before running it.
+- **Triage drafting.** Suggested next steps and playbook choices, always as proposals for the
+  analyst to act on; the assistant holds no execution authority.
+
+Tenant data never trains shared models.
+
+Code: this directory, `app/api/cases/[id]/narrative/`, `lib/case-grouping.ts`. Tests:
+`tests/integration/case-narrative-regenerate.test.ts`, `group-detections-cron.test.ts`.

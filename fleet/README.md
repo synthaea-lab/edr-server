@@ -1,26 +1,19 @@
-# server/fleet — Cross-Machine Correlation & Adaptive Posture
+# Cross-host correlation
 
-Incident correlation across the fleet: detections from one machine change how the
-rest of the pool is watched. A case on one host raises the alertness of related hosts
-— same subnet, same logged-in identity, same software inventory, peers it recently
-talked to laterally.
+Detections on one machine change how the rest of the fleet is read.
 
-Two halves:
-- **Correlation**: join detections/cases across hosts by shared entities (identity,
-  source/destination pairs, file hashes from `intel`/`enrich`) into one fleet-level
-  case — the "cases, not alerts" model extended to its natural scope.
-- **Adaptive posture**: a case above a severity threshold emits a *posture change*
-  for a computed blast-radius set of agents — shipped through the normal signed
-  `policy` channel (a posture is a policy overlay: lowered ML thresholds, widened
-  telemetry, shortened heartbeat interval, optional stricter response gates), with
-  automatic expiry so heightened states decay instead of accumulating.
+**Built: fleet cases.** The `join-fleet-cases` scheduled job joins cases of different agents into
+one fleet case when their detections share an executed file hash or a signed-in identity within
+24 hours. The join is deliberately narrow, because an attacker who can make a detection fire could
+otherwise link hosts they do not control: generic accounts such as `root` or `SYSTEM` are not
+joined on, nor is a hash that most of the fleet runs, nor an entity seen on too many agents. Fleet
+cases are listed at `/console/fleet-cases`.
 
-Posture reaches agents on two paths: the signed `policy` channel (authoritative) and
-peer gossip via `crates/mesh` (fast inside a segment, resilient when the control
-plane is unreachable) — mesh hints carry the originating signature and are advisory
-until verified. The mesh also feeds correlation upward: peer attestation reports
-("host X went silent") are fleet-case evidence.
+**Planned: adaptive posture.** A fleet case above a severity threshold would raise the alertness of
+a computed set of related hosts (same subnet, same identity, recent lateral peers) through a signed
+policy overlay: lower model thresholds, wider telemetry, a shorter heartbeat interval. A posture
+only ever heightens, never disables, and expires on its own, enforced by the server.
 
-Guardrails: posture changes are audited like response actions; an attacker must not
-be able to weaponize them (posture never *disables* anything, only heightens; expiry
-is server-enforced — and the same heighten-only rule binds mesh gossip).
+Code: `lib/fleet-case.ts`, `app/api/cron/join-fleet-cases/`, `app/api/fleet-cases/`,
+`app/console/fleet-cases/`. Tests: `tests/unit/fleet-case.test.ts`,
+`tests/integration/join-fleet-cases-cron.test.ts`, `fleet-cases-console.test.ts`.
