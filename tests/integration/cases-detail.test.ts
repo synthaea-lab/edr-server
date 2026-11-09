@@ -142,6 +142,28 @@ describe("GET /api/cases/[id]", () => {
     expect(body.narrative.stale).toBe(false);
   });
 
+  it("returns the latest narrative with its citations", async () => {
+    const tenant = await createTestTenant();
+    const agent = await createTestAgent(tenant.id);
+    const case_ = await createTestCase(tenant.id);
+    const detection = await createTestDetection(tenant.id, agent.id, { caseId: case_.id });
+    const citations = [{ detectionId: detection.id, claim: "ran a payload" }];
+    await createTestCaseNarrative(tenant.id, case_.id, {
+      narrative: "Older.",
+      generatedAt: new Date(Date.now() + 60_000),
+    });
+    await createTestCaseNarrative(tenant.id, case_.id, {
+      narrative: "Latest.",
+      citations,
+      generatedAt: new Date(Date.now() + 120_000),
+    });
+
+    const res = await GET(request(tenant.id), { params: { id: case_.id } });
+    const body = await res.json();
+
+    expect(body.narrative).toMatchObject({ narrative: "Latest.", citations, stale: false });
+  });
+
   it("returns 404 for a case belonging to another tenant", async () => {
     const tenant1 = await createTestTenant("Tenant 1");
     const tenant2 = await createTestTenant("Tenant 2");

@@ -17,17 +17,14 @@
 import { z } from "zod";
 import { EvidenceGraph } from "./evidence-graph";
 import { PROMPT_VERSION, buildSystemPrompt } from "./prompt";
+import { NarrativeCitationSchema } from "@/lib/case-narrative";
+import type { NarrativeCitation } from "@/lib/case-narrative";
 
 const DEFAULT_BASE_URL = "http://localhost:11434/v1";
 const DEFAULT_MODEL = "llama3.1";
 const DEFAULT_API_KEY = "ollama"; // Ollama ignores it; other providers require a real value.
 const DEFAULT_PROVIDER_LABEL = "self-hosted";
 const DEFAULT_TIMEOUT_MS = 30_000;
-
-export interface NarrativeCitation {
-  detectionId: string;
-  claim: string;
-}
 
 export interface NarrativeResult {
   text: string;
@@ -41,12 +38,7 @@ export class NarrativeGenerationError extends Error {}
 
 const NarrativeResponseSchema = z.object({
   narrative: z.string(),
-  citations: z.array(
-    z.object({
-      detectionId: z.string(),
-      claim: z.string(),
-    })
-  ),
+  citations: z.array(NarrativeCitationSchema),
 });
 
 /**
