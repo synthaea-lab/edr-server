@@ -28,7 +28,7 @@ export function isSafeArtifactPath(entryPath: string): boolean {
 
 /**
  * The IOC feeds an agent loads are every `*.txt` under `<content_root>/ioc/` plus an optional
- * `ioc/VERSION` (`agent/src/ioc.rs`), picked by path: the agent never looks at an entry's `type`.
+ * `ioc/VERSION` (`apps/agent/src/ioc.rs`), picked by path: the agent never looks at an entry's `type`.
  * So the pairing is enforced here, in both directions: only an `ioc` entry may sit under `ioc/`
  * (a `rule` entry named `ioc/x.txt` would otherwise be loaded as a feed), and an `ioc` entry may
  * only be a feed or the version file. A feed must also be one the device would load whole: every
