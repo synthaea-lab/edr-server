@@ -142,6 +142,49 @@ describe("GET /api/cron/group-detections", () => {
     expect(cases[0].severity).toBe("critical");
   });
 
+  it("bumps an open case from an earlier tick, and never lowers it", async () => {
+    const tenant = await createTestTenant();
+    const agent = await createTestAgent(tenant.id);
+    const t0 = new Date();
+    await createTestDetection(tenant.id, agent.id, { technique: "T1059.001", severity: "medium", timestamp: t0 });
+    await GET(cronRequest());
+
+    await createTestDetection(tenant.id, agent.id, {
+      technique: "T1059.003",
+      severity: "low",
+      timestamp: new Date(t0.getTime() + 60_000),
+    });
+    await createTestDetection(tenant.id, agent.id, {
+      technique: "T1059.001",
+      severity: "high",
+      timestamp: new Date(t0.getTime() + 120_000),
+    });
+    const body = await (await GET(cronRequest())).json();
+
+    expect(body.casesCreated).toBe(0);
+    expect(body.detectionsGrouped).toBe(2);
+    const cases = await prisma.case.findMany({ where: { tenantId: tenant.id }, include: { detections: true } });
+    expect(cases).toHaveLength(1);
+    expect(cases[0].severity).toBe("high");
+    expect(cases[0].detections).toHaveLength(3);
+  });
+
+  it("titles a new case after its first detection's technique column and agent hostname", async () => {
+    const tenant = await createTestTenant();
+    const agent = await createTestAgent(tenant.id, undefined, { hostname: "ws-042" });
+    await createTestDetection(tenant.id, agent.id, {
+      technique: "T1566.001",
+      severity: "low",
+      meta: { techniques: ["T1566.001", "T1204.002"] },
+    });
+
+    await GET(cronRequest());
+
+    const cases = await prisma.case.findMany({ where: { tenantId: tenant.id } });
+    expect(cases).toHaveLength(1);
+    expect(cases[0]).toMatchObject({ title: "T1566.001 activity on ws-042", severity: "low", status: "open" });
+  });
+
   it("does not let the grouping window drift past the case's first detection", async () => {
     // Regression test: matching used to be evaluated against whichever
     // detection was added to the case most recently, letting a chain of
