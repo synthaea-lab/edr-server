@@ -2,8 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireTenantAdmin, requireTenantMember } from "@/lib/admin-auth";
 import { z } from "zod";
-import { validatePublishable } from "@/lib/content-publish";
-import { recordAudit } from "@/lib/audit";
+import { publishRelease } from "@/lib/release-publish";
+import { publishResponse } from "@/lib/http/publish-response";
 
 const CreateReleaseSchema = z.object({
   ring: z.enum(["canary_0", "canary_1", "canary_2", "prod"]),
@@ -47,75 +47,9 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const { ring, manifestUrl, manifestSha256, releasedAt, restoresVersion } = validation.data;
-
-    // Find highest release version for this tenant + ring
-    const latestRelease = await prisma.contentRelease.findFirst({
-      where: { tenantId, ring },
-      orderBy: { releaseVersion: "desc" },
-    });
-
-    const nextVersion = (latestRelease?.releaseVersion || 0) + 1;
-
-    // Nothing is published that an agent could not apply: the manifest must be the one it is
-    // published as and every artifact it lists must be in the store (see validatePublishable).
-    const publishable = await validatePublishable({
-      ring,
-      releaseVersion: nextVersion,
-      manifestUrl,
-      manifestSha256,
-    });
-    if (!publishable.ok) {
-      return NextResponse.json({ error: publishable.error }, { status: 422 });
-    }
-
-    // The release and its audit row commit together: a release never goes out unaudited.
-    let release;
-    try {
-      release = await prisma.$transaction(async (tx) => {
-        const created = await tx.contentRelease.create({
-          data: {
-            tenantId,
-            ring,
-            releaseVersion: nextVersion,
-            manifestUrl,
-            manifestSha256,
-            status: "active",
-            releasedAt: releasedAt ? new Date(releasedAt) : new Date(),
-          },
-        });
-        await recordAudit(tx, {
-          tenantId,
-          userId,
-          action: "content.release.create",
-          resource: `content_releases/${created.id}`,
-          details: {
-            ring,
-            releaseVersion: nextVersion,
-            manifestUrl,
-            entries: publishable.manifest.entries.length,
-            corrective: restoresVersion !== undefined,
-            restoresVersion: restoresVersion ?? null,
-          },
-        });
-        return created;
-      });
-    } catch (error) {
-      // Another publish read the same highest release and took the number first (the
-      // (tenant, ring, version) row is unique): the manifest signed for it is now stale.
-      if ((error as { code?: string }).code === "P2002") {
-        return NextResponse.json(
-          { error: "Another release took this number first; rebuild the manifest for the next one" },
-          { status: 409 }
-        );
-      }
-      throw error;
-    }
-
-    return NextResponse.json({
-      status: "created",
-      release,
-    });
+    return publishResponse(
+      await publishRelease(prisma, { kind: "content", tenantId, userId, ...validation.data })
+    );
   } catch (error) {
     console.error("Content release creation error:", error);
     return NextResponse.json(
