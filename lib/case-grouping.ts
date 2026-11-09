@@ -1,6 +1,6 @@
 /**
  * Pure decision logic for the detection-grouping heuristic (issue #50),
- * separated from the Prisma calls in app/api/cron/group-detections/route.ts
+ * separated from the Prisma calls in lib/case-grouping-store.ts
  * so it's unit-testable without a database.
  *
  * This is the honest limit of what's derivable from the technique ids stored
@@ -86,4 +86,150 @@ export function outranksSeverity(candidate: string, current: string): boolean {
   const candidateRank = SEVERITY_RANK[candidate] ?? -1;
   const currentRank = SEVERITY_RANK[current] ?? -1;
   return candidateRank > currentRank;
+}
+
+/** `meta.techniques` of a detection, if its `meta` is an object at all. */
+function listedTechniques(meta: unknown): unknown {
+  return isJsonObject(meta) ? meta.techniques : undefined;
+}
+
+function isJsonObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/** A detection still at `caseId: null`, as the grouping pass reads it. */
+export interface UngroupedDetection {
+  id: string;
+  agentId: string;
+  timestamp: Date;
+  /** The stored `technique` column; `meta.techniques` is joined to it for matching. */
+  technique: string;
+  severity: string;
+  meta: unknown;
+}
+
+/** An open case and the evidence it already holds. */
+export interface OpenCase {
+  id: string;
+  severity: string;
+  /** `technique` is the grouping tag (`groupingTechnique`), not the stored column. */
+  detections: { agentId: string; timestamp: Date; technique: string }[];
+}
+
+/** A case the pass opens, with its final severity and the detections it receives. */
+export interface NewCase {
+  title: string;
+  severity: string;
+  detectionIds: string[];
+}
+
+/** What one grouping pass writes. */
+export interface GroupingPlan {
+  /** In the order the pass opened them. */
+  newCases: NewCase[];
+  /** Existing open case id -> ids of the detections it receives. */
+  assignments: Map<string, string[]>;
+  /** Existing open case id -> its raised severity. */
+  severityBumps: Map<string, string>;
+}
+
+interface Candidate {
+  /** The case the plan writes to: one this pass opens, or an existing one by id. */
+  ref: { newCase: NewCase } | { caseId: string };
+  severity: string;
+  evidence: OpenCase["detections"];
+  /** Earliest evidence timestamp, the anchor of the time window; null while it has none. */
+  startMs: number | null;
+}
+
+function existingCandidate(open: OpenCase): Candidate {
+  const times = open.detections.map((d) => d.timestamp.getTime());
+  return {
+    ref: { caseId: open.id },
+    severity: open.severity,
+    evidence: [...open.detections],
+    startMs: times.length === 0 ? null : times.reduce((a, b) => Math.min(a, b)),
+  };
+}
+
+/**
+ * The case a detection joins: the first candidate holding evidence from the same agent with a
+ * related technique, within the window of the case's *earliest* detection (anchoring on the
+ * latest one would let the window drift as detections chain together).
+ */
+function findMatch(candidates: readonly Candidate[], agentId: string, technique: string, timestamp: Date) {
+  return candidates.find(
+    (c) =>
+      c.startMs !== null &&
+      c.evidence.some((d) => d.agentId === agentId && isRelatedTechnique(d.technique, technique)) &&
+      withinTimeWindow(new Date(c.startMs), timestamp)
+  );
+}
+
+/** Opens a case for a detection that matched none, titled after its technique column and host. */
+function openCandidate(
+  plan: GroupingPlan,
+  detection: UngroupedDetection,
+  hostname: string | null | undefined
+): Candidate {
+  const newCase: NewCase = {
+    title: `${detection.technique} activity on ${hostname ?? detection.agentId}`,
+    severity: detection.severity,
+    detectionIds: [],
+  };
+  plan.newCases.push(newCase);
+  return { ref: { newCase }, severity: detection.severity, evidence: [], startMs: null };
+}
+
+/** Records `detection` as evidence of `target`, raising its severity if the detection outranks it. */
+function attach(plan: GroupingPlan, target: Candidate, detection: UngroupedDetection, technique: string): void {
+  const { ref } = target;
+  if ("newCase" in ref) {
+    ref.newCase.detectionIds.push(detection.id);
+  } else {
+    const ids = plan.assignments.get(ref.caseId) ?? [];
+    ids.push(detection.id);
+    plan.assignments.set(ref.caseId, ids);
+  }
+
+  if (outranksSeverity(detection.severity, target.severity)) {
+    target.severity = detection.severity;
+    if ("newCase" in ref) {
+      ref.newCase.severity = detection.severity;
+    } else {
+      plan.severityBumps.set(ref.caseId, detection.severity);
+    }
+  }
+
+  target.evidence.push({ agentId: detection.agentId, timestamp: detection.timestamp, technique });
+  const ms = detection.timestamp.getTime();
+  target.startMs = target.startMs === null ? ms : Math.min(target.startMs, ms);
+}
+
+/**
+ * Decides, without touching the database, where each ungrouped detection goes: the first open
+ * case it matches (existing cases first, then the ones this pass opened, in order), or a new case.
+ * Detections are taken in the given order (oldest first), and each one becomes evidence later
+ * ones can match. A case's severity is raised to the worst evidence it receives, never lowered;
+ * a new case is planned with its final severity.
+ */
+export function planGrouping(
+  ungrouped: readonly UngroupedDetection[],
+  openCases: readonly OpenCase[],
+  hostnameByAgentId: ReadonlyMap<string, string | null>
+): GroupingPlan {
+  const plan: GroupingPlan = { newCases: [], assignments: new Map(), severityBumps: new Map() };
+  const candidates = openCases.map(existingCandidate);
+
+  for (const detection of ungrouped) {
+    const technique = groupingTechnique(detection.technique, listedTechniques(detection.meta));
+    let target = findMatch(candidates, detection.agentId, technique, detection.timestamp);
+    if (!target) {
+      target = openCandidate(plan, detection, hostnameByAgentId.get(detection.agentId));
+      candidates.push(target);
+    }
+    attach(plan, target, detection, technique);
+  }
+
+  return plan;
 }
