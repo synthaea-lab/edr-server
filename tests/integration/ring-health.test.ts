@@ -80,11 +80,11 @@ describe("GET /api/rings/[ring]/health", () => {
     });
   });
 
-  it("answers a caller with no tenant context with 500 (current behavior, see SV-004)", async () => {
+  it("refuses a caller with no tenant context with 401", async () => {
     const res = await getHealth("prod", {});
 
-    expect(res.status).toBe(500);
-    expect(await res.json()).toEqual({ error: "Internal server error" });
+    expect(res.status).toBe(401);
+    expect(await res.json()).toEqual({ error: "Authentication required" });
   });
 
   it("reports an empty ring as healthy with zero counts and no release", async () => {

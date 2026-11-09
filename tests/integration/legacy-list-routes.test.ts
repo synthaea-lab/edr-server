@@ -81,11 +81,11 @@ describe("GET /api/cases", () => {
     expect(await res.json()).toEqual({ error: "Internal server error" });
   });
 
-  it("answers a caller with no tenant context with 500 (current behavior, see SV-004)", async () => {
+  it("refuses a caller with no tenant context with 401", async () => {
     const res = await casesReq("", {});
 
-    expect(res.status).toBe(500);
-    expect(await res.json()).toEqual({ error: "Internal server error" });
+    expect(res.status).toBe(401);
+    expect(await res.json()).toEqual({ error: "Authentication required" });
   });
 });
 
@@ -124,11 +124,11 @@ describe("GET /api/agents/[agentId]", () => {
     expect(unknownRes.status).toBe(404);
   });
 
-  it("answers a caller with no tenant context with 500 (current behavior, see SV-004)", async () => {
+  it("refuses a caller with no tenant context with 401", async () => {
     const res = await agentReq("any", {});
 
-    expect(res.status).toBe(500);
-    expect(await res.json()).toEqual({ error: "Internal server error" });
+    expect(res.status).toBe(401);
+    expect(await res.json()).toEqual({ error: "Authentication required" });
   });
 });
 
@@ -191,10 +191,10 @@ describe("GET /api/rings/[ring]/agents", () => {
     expect(await res.json()).toEqual({ error: "Internal server error" });
   });
 
-  it("answers a caller with no tenant context with 500 (current behavior, see SV-004)", async () => {
+  it("refuses a caller with no tenant context with 401", async () => {
     const res = await ringAgentsReq("prod", "", {});
 
-    expect(res.status).toBe(500);
-    expect(await res.json()).toEqual({ error: "Internal server error" });
+    expect(res.status).toBe(401);
+    expect(await res.json()).toEqual({ error: "Authentication required" });
   });
 });
