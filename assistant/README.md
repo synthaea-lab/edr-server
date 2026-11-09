@@ -6,7 +6,7 @@ structured evidence; it never scores, never judges and never runs on the endpoin
 **Built: case narratives.** From a case page, an analyst generates the readable story of the case.
 `evidence-graph.ts` builds an allowlisted evidence graph from the case's detections, `llm-client.ts`
 sends it to an OpenAI-compatible chat-completions endpoint (a self-hosted Ollama by default, see the
-`LLM_*` variables in [README-SETUP.md](../README-SETUP.md#case-narratives)), and `prompt.ts` holds
+`LLM_*` variables in [configuration](../docs/configuration.md#case-narratives)), and `prompt.ts` holds
 the versioned system prompt. Every claim cites the record it comes from, the output is labeled with
 its provider, and a narrative is marked stale when the case's evidence changes.
 

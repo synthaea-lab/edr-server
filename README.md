@@ -78,8 +78,7 @@ curl --cacert certs/ca.crt https://localhost:8443/api/health
 ```
 
 [README-SETUP.md](README-SETUP.md) continues from here: opening the console, creating the first
-account and tenant, enrolling an agent, reaching the stack from a lab VM, and every configuration
-variable.
+account and tenant, enrolling an agent and reaching the stack from a lab VM.
 
 To connect an agent, follow
 [Standalone or with a control plane](https://www.synthaea.com/en/docs/standalone-and-control-plane)
@@ -89,8 +88,10 @@ in the documentation.
 
 - [Project documentation](https://www.synthaea.com/en/docs): installing and configuring the agent and
   the control plane.
-- [README-SETUP.md](README-SETUP.md): the development stack, first sign-in, enrollment and
-  configuration reference.
+- [README-SETUP.md](README-SETUP.md): the development stack, first sign-in and enrollment.
+- [Technical documentation](docs/README.md): architecture, the agent protocol, content and
+  releases, the security model, the data model, scheduled jobs, configuration, deployment,
+  development and testing.
 - [CONTRIBUTING.md](CONTRIBUTING.md): building, testing and submitting changes.
 - Module notes, one per functional area. The code itself lives in `app/`, `lib/` and `prisma/`.
 

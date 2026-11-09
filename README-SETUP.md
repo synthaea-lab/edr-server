@@ -218,6 +218,9 @@ curl -H "Authorization: Bearer dev_cron_secret" \
   http://localhost:3000/api/cron/detect-silent-agents
 ```
 
+[docs/scheduled-jobs.md](docs/scheduled-jobs.md) explains what each job does, its failure signals
+and a crontab that schedules them all.
+
 ## Run outside Docker
 
 The application also runs directly on Node.js 20 against any PostgreSQL 15 database:
@@ -234,51 +237,10 @@ Docker image ships; `PORT` and `HOSTNAME` apply as usual. `next start` does not 
 
 ## Configuration
 
-The compose file sets the variables the stack needs. [`.env.example`](.env.example) lists them for a
-run outside Docker.
-
-### Core
-
-| Variable | Description | Development value |
-| --- | --- | --- |
-| `DATABASE_URL` | PostgreSQL connection string | `postgresql://synthaea:synthaea_dev@localhost:5432/synthaea` |
-| `BETTER_AUTH_SECRET` | Signs console sessions | `dev_secret_change_in_production` |
-| `NEXTAUTH_URL` | Public URL of the console, used for links | `http://localhost:3000` |
-| `NGINX_PROXY_SECRET` | Shared secret the proxy adds to every request; agent endpoints refuse a request without it | `dev_nginx_secret_change_in_production` |
-| `CRON_SECRET` | Bearer token of the scheduled jobs | `dev_cron_secret` |
-| `PLATFORM_OPERATOR_USER_IDS` | Comma-separated user ids allowed to create tenants | unset (nobody) |
-| `NODE_ENV` | Environment mode | `development` |
-
-### Case narratives
-
-| Variable | Description | Default in `.env.example` |
-| --- | --- | --- |
-| `LLM_BASE_URL` | Base URL of an OpenAI-compatible chat-completions API | `http://localhost:11434/v1` (Ollama) |
-| `LLM_MODEL` | Model name | `llama3.1` |
-| `LLM_API_KEY` | API key | `ollama` |
-| `LLM_PROVIDER_LABEL` | Label shown next to a narrative | `self-hosted` |
-| `LLM_TIMEOUT_MS` | Request timeout | `30000` |
-
-### Notifications
-
-| Variable | Description |
-| --- | --- |
-| `NOTIFY_SECRET_KEY` | `<keyId>:<64 hex>`, seals the webhook signing secrets (AES-256-GCM). Generate one with `echo "k1:$(openssl rand -hex 32)"`. Unset, creating a channel answers `503`. |
-| `NOTIFY_SECRET_KEY_PREVIOUS` | Older keys of the same form, comma-separated, used only to open secrets sealed before a rotation. The delivery job re-seals them under the current key, after which the old key can be retired. |
-| `NOTIFY_ALLOWED_PRIVATE_HOSTS` | `<tenant id>:<host>` entries, comma-separated: hosts that a tenant's webhook URL may resolve to a private address (an on-premises SOAR, for example). No entry ever opens loopback, link-local or cloud metadata addresses. An entry trusts a name, but DNS decides the address, so prefer IP literals or names only the operator controls. |
-| `NOTIFY_ALLOWED_PORTS` | Ports besides 443 that a webhook URL may use |
-| `NOTIFY_CONSOLE_URL` | Base URL of the console for links in payloads; falls back to `NEXTAUTH_URL` |
-
-### Telemetry archive, prevalence and snapshots
-
-| Variable | Description |
-| --- | --- |
-| `LAKE_DIR`, `LAKE_S3_*` | Turn the telemetry archive on, on a directory or an S3-compatible bucket. See [datalake/README.md](datalake/README.md). |
-| `LAKE_WRITER_MAX_BATCHES` | Batches one `write-lake` call drains (default 200) |
-| `PREVALENCE_RETENTION_DAYS` | Days a sighting is kept without being seen again (default 180) |
-| `PREVALENCE_MAX_ROWS_PER_TENANT` | Row cap per tenant; the oldest-seen rows go first (default 5,000,000) |
-| `SYNTHAEA_SNAPSHOT_SIGNER` | `test` signs common-set snapshots with the public test key, for lab use only. Unset, no snapshot is built or served. |
-| `SNAPSHOT_MIN_HOSTS`, `SNAPSHOT_MIN_HOSTS_COVERED`, `SNAPSHOT_FALSE_POSITIVE_RATE`, `SNAPSHOT_MAX_BYTES`, `SNAPSHOT_MAX_ENTRIES`, `SNAPSHOT_MIN_ENTRY_FRACTION` | Tune the snapshot build; the defaults are in `lib/snapshot-publish.ts` |
+The compose file sets the variables the stack needs, and [`.env.example`](.env.example) lists them
+for a run outside Docker. [docs/configuration.md](docs/configuration.md) describes every variable
+the server reads: the core secrets, case narratives, notifications, the telemetry archive,
+prevalence and snapshots.
 
 ## Before you expose the stack
 
@@ -291,6 +253,8 @@ The development defaults are public. Before the stack leaves a single machine:
   headers.
 - Do not publish PostgreSQL.
 - Replace the development CA and certificates with your own PKI.
+
+[docs/deployment.md](docs/deployment.md) covers the images, the proxy and the state to persist.
 
 ## Troubleshooting
 
