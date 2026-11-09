@@ -260,6 +260,70 @@ describe("POST /api/release (publish)", () => {
     expect(db.auditLog.create).toHaveBeenCalledOnce();
   });
 
+  it("creates the row and its audit entry from the request, and answers with the row", async () => {
+    const manifest = manifestJson();
+    store(manifest);
+    const body = publishBody(manifest, { releasedAt: "2026-10-12T09:30:00.000Z" });
+    const res = await publish(post(body));
+    const data = {
+      tenantId: "t1",
+      ring: "canary_0",
+      releaseVersion: 2,
+      manifestUrl: body.manifestUrl,
+      manifestSha256: body.manifestSha256,
+      status: "active",
+      releasedAt: new Date("2026-10-12T09:30:00.000Z"),
+    };
+    expect(db.binaryRelease.findFirst).toHaveBeenCalledWith({
+      where: { tenantId: "t1", ring: "canary_0" },
+      orderBy: { releaseVersion: "desc" },
+    });
+    expect(db.binaryRelease.create).toHaveBeenCalledWith({ data });
+    expect(db.auditLog.create).toHaveBeenCalledWith({
+      data: {
+        tenantId: "t1",
+        userId: "u1",
+        action: "release.create",
+        resource: "binary_releases/new",
+        details: { ring: "canary_0", releaseVersion: 2, manifestUrl: body.manifestUrl, entries: 2 },
+      },
+    });
+    expect(await res.json()).toEqual({
+      status: "created",
+      release: { id: "new", ...data, releasedAt: "2026-10-12T09:30:00.000Z" },
+    });
+  });
+
+  it("names the ring's latest version when it refuses a release that is not newer", async () => {
+    const manifest = manifestJson();
+    store(manifest);
+    db.binaryRelease.findFirst.mockResolvedValue({ releaseVersion: 3 });
+    const res = await publish(post(publishBody(manifest)));
+    expect(res.status).toBe(409);
+    expect(await res.json()).toEqual({
+      error: "releaseVersion must be greater than the ring's latest release",
+      latest: 3,
+    });
+  });
+
+  it("answers 409, not 500, when a concurrent publish took the version first", async () => {
+    const manifest = manifestJson();
+    store(manifest);
+    db.binaryRelease.create.mockRejectedValue(Object.assign(new Error("unique"), { code: "P2002" }));
+    const res = await publish(post(publishBody(manifest)));
+    expect(res.status).toBe(409);
+    expect(await res.json()).toEqual({ error: "A release with this version already exists for the ring" });
+    expect(db.auditLog.create).not.toHaveBeenCalled();
+  });
+
+  it("names the missing artifact when it refuses to publish", async () => {
+    const manifest = manifestJson();
+    store(manifest, { watchdog: WATCHDOG_BYTES });
+    const res = await publish(post(publishBody(manifest)));
+    expect(res.status).toBe(422);
+    expect((await res.json()).error).toMatch(/^Artifact "agent": /);
+  });
+
   it("refuses a release that is not newer than the ring's latest", async () => {
     const manifest = manifestJson();
     store(manifest);

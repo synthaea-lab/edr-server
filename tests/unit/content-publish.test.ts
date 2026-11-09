@@ -271,6 +271,73 @@ describe("POST /api/content/release: nothing is published that an agent could no
     expect(db.auditLog.create).not.toHaveBeenCalled();
   });
 
+  it("names the race in the 409 body", async () => {
+    const manifest = manifestFor();
+    store(manifest, GOOD_ARTIFACTS);
+    db.contentRelease.create.mockRejectedValue(Object.assign(new Error("unique"), { code: "P2002" }));
+    const res = await publish(post(publishBody(manifest)));
+    expect(await res.json()).toEqual({
+      error: "Another release took this number first; rebuild the manifest for the next one",
+    });
+  });
+
+  it("creates the row and its audit entry from the request, and answers with the row", async () => {
+    const manifest = manifestFor();
+    store(manifest, GOOD_ARTIFACTS);
+    const body = publishBody(manifest, { releasedAt: "2026-10-12T09:30:00.000Z" });
+    const res = await publish(post(body));
+    const data = {
+      tenantId: "t1",
+      ring: "canary_0",
+      releaseVersion: 5,
+      manifestUrl: body.manifestUrl,
+      manifestSha256: body.manifestSha256,
+      status: "active",
+      releasedAt: new Date("2026-10-12T09:30:00.000Z"),
+    };
+    expect(db.contentRelease.findFirst).toHaveBeenCalledWith({
+      where: { tenantId: "t1", ring: "canary_0" },
+      orderBy: { releaseVersion: "desc" },
+    });
+    expect(db.contentRelease.create).toHaveBeenCalledWith({ data });
+    expect(db.auditLog.create).toHaveBeenCalledWith({
+      data: {
+        tenantId: "t1",
+        userId: "u1",
+        action: "content.release.create",
+        resource: "content_releases/r5",
+        details: {
+          ring: "canary_0",
+          releaseVersion: 5,
+          manifestUrl: body.manifestUrl,
+          entries: 2,
+          corrective: false,
+          restoresVersion: null,
+        },
+      },
+    });
+    expect(await res.json()).toEqual({
+      status: "created",
+      release: { id: "r5", ...data, releasedAt: "2026-10-12T09:30:00.000Z" },
+    });
+  });
+
+  it("records a corrective release's restoresVersion in its audit entry", async () => {
+    const manifest = manifestFor();
+    store(manifest, GOOD_ARTIFACTS);
+    expect((await publish(post(publishBody(manifest, { restoresVersion: 2 })))).status).toBe(200);
+    const details = db.auditLog.create.mock.calls[0][0].data.details;
+    expect(details).toMatchObject({ corrective: true, restoresVersion: 2 });
+  });
+
+  it("numbers the first release of an empty ring 1", async () => {
+    db.contentRelease.findFirst.mockResolvedValue(null);
+    const manifest = manifestFor({ release_version: 1 });
+    store(manifest, GOOD_ARTIFACTS);
+    expect((await publish(post(publishBody(manifest)))).status).toBe(200);
+    expect(db.contentRelease.create.mock.calls[0][0].data.releaseVersion).toBe(1);
+  });
+
   it("without a tenant context it is not served", async () => {
     const manifest = manifestFor();
     store(manifest, GOOD_ARTIFACTS);
