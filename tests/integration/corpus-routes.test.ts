@@ -391,10 +391,10 @@ describe("GET /api/corpus/versions", () => {
     expect(await res.json()).toEqual({ error: "Internal server error" });
   });
 
-  it("answers a caller with no tenant context with 500 (current behavior, see SV-004)", async () => {
+  it("answers a caller with no tenant context with 401 (SV-004)", async () => {
     const res = await listVersions(versionsReq("", {}));
 
-    expect(res.status).toBe(500);
-    expect(await res.json()).toEqual({ error: "Internal server error" });
+    expect(res.status).toBe(401);
+    expect(await res.json()).toEqual({ error: "Authentication required" });
   });
 });
