@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireTenantMember } from "@/lib/admin-auth";
+import { NotFound, route } from "@/lib/http/handler";
 import { caseSubgraph, sortGraph } from "@/lib/graph";
 
 /**
@@ -12,8 +13,9 @@ import { caseSubgraph, sortGraph } from "@/lib/graph";
  *
  * Response: { nodes: GraphNode[], edges: GraphEdge[] }
  */
-export async function GET(req: NextRequest, { params }: { params: { id: string } }) {
-  try {
+export const GET = route(
+  "GET /api/cases/[id]/graph",
+  async (req: NextRequest, { params }: { params: { id: string } }) => {
     const authed = requireTenantMember(req);
     if ("response" in authed) return authed.response;
     const { tenantId } = authed;
@@ -32,13 +34,8 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
         detections: { where: { tenantId }, select: { agentId: true, event: true, timestamp: true } },
       },
     });
-    if (!case_) {
-      return NextResponse.json({ error: "Case not found" }, { status: 404 });
-    }
+    if (!case_) throw new NotFound("Case not found");
 
     return NextResponse.json(sortGraph(caseSubgraph(case_.detections)));
-  } catch (error) {
-    console.error("Case graph query error:", error);
-    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   }
-}
+);

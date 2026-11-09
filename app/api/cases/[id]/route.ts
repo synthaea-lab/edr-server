@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { damageManifestOf } from "@/lib/damage-manifest";
 import { requireTenantMember } from "@/lib/admin-auth";
+import { NotFound, route } from "@/lib/http/handler";
 import {
   getPrevalenceBatch,
   lookedUpKeys,
@@ -26,8 +27,9 @@ import {
  * `stale` is derived, not stored: true when a detection was attached to the
  * case after the latest narrative was generated.
  */
-export async function GET(req: NextRequest, { params }: { params: { id: string } }) {
-  try {
+export const GET = route(
+  "GET /api/cases/[id]",
+  async (req: NextRequest, { params }: { params: { id: string } }) => {
     const authed = requireTenantMember(req);
     if ("response" in authed) return authed.response;
     const { tenantId } = authed;
@@ -38,9 +40,7 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
       include: { detections: { orderBy: { timestamp: "desc" } } },
     });
 
-    if (!case_) {
-      return NextResponse.json({ error: "Case not found" }, { status: 404 });
-    }
+    if (!case_) throw new NotFound("Case not found");
 
     const { detections, ...caseFields } = case_;
 
@@ -65,8 +65,5 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
 
     const damageManifest = damageManifestOf(detections);
     return NextResponse.json({ case: caseFields, detections, narrative, prevalence, damageManifest });
-  } catch (error) {
-    console.error("Case detail query error:", error);
-    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   }
-}
+);

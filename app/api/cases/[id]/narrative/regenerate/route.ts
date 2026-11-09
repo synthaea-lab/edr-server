@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { requireTenantMember } from "@/lib/admin-auth";
+import { BadRequest, NotFound, route } from "@/lib/http/handler";
 import { buildEvidenceGraph } from "@/assistant/evidence-graph";
 import { generateNarrative, NarrativeGenerationError } from "@/assistant/llm-client";
 
@@ -15,23 +16,17 @@ import { generateNarrative, NarrativeGenerationError } from "@/assistant/llm-cli
  *
  * Response: { narrative: CaseNarrative }
  */
-export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
-  try {
+export const POST = route(
+  "POST /api/cases/[id]/narrative/regenerate",
+  async (req: NextRequest, { params }: { params: { id: string } }) => {
     const authed = requireTenantMember(req);
     if ("response" in authed) return authed.response;
     const { tenantId, userId } = authed;
     const caseId = params.id;
 
     const graph = await buildEvidenceGraph(tenantId, caseId);
-    if (!graph) {
-      return NextResponse.json({ error: "Case not found" }, { status: 404 });
-    }
-    if (graph.items.length === 0) {
-      return NextResponse.json(
-        { error: "Case has no evidence to narrate" },
-        { status: 400 }
-      );
-    }
+    if (!graph) throw new NotFound("Case not found");
+    if (graph.items.length === 0) throw new BadRequest("Case has no evidence to narrate");
 
     const result = await generateNarrative(graph);
 
@@ -65,13 +60,13 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     });
 
     return NextResponse.json({ narrative });
-  } catch (error) {
-    if (error instanceof NarrativeGenerationError) {
-      console.error("Narrative generation error:", error.message);
-      return NextResponse.json({ error: "Narrative generation failed" }, { status: 502 });
-    }
+  },
+  { onError: narrativeFailure }
+);
 
-    console.error("Narrative regeneration error:", error);
-    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
-  }
+/** The LLM call failing is the upstream's fault, not ours: 502, not the generic 500. */
+function narrativeFailure(error: unknown): NextResponse | undefined {
+  if (!(error instanceof NarrativeGenerationError)) return undefined;
+  console.error("Narrative generation error:", error.message);
+  return NextResponse.json({ error: "Narrative generation failed" }, { status: 502 });
 }
