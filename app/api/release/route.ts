@@ -3,6 +3,7 @@ import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { requireTenantAdmin, requireTenantMember } from "@/lib/admin-auth";
 import { loadReleaseArtifact, loadReleaseManifest } from "@/lib/release-manifest";
+import { recordAudit } from "@/lib/audit";
 
 const CreateReleaseSchema = z.object({
   ring: z.enum(["canary_0", "canary_1", "canary_2", "prod"]),
@@ -74,18 +75,34 @@ export async function POST(req: NextRequest) {
       }
     }
 
+    // The release and its audit row commit together: a release never goes out unaudited.
     let release;
     try {
-      release = await prisma.binaryRelease.create({
-        data: {
+      release = await prisma.$transaction(async (tx) => {
+        const created = await tx.binaryRelease.create({
+          data: {
+            tenantId,
+            ring,
+            releaseVersion,
+            manifestUrl,
+            manifestSha256,
+            status: "active",
+            releasedAt: releasedAt ? new Date(releasedAt) : new Date(),
+          },
+        });
+        await recordAudit(tx, {
           tenantId,
-          ring,
-          releaseVersion,
-          manifestUrl,
-          manifestSha256,
-          status: "active",
-          releasedAt: releasedAt ? new Date(releasedAt) : new Date(),
-        },
+          userId,
+          action: "release.create",
+          resource: `binary_releases/${created.id}`,
+          details: {
+            ring,
+            releaseVersion,
+            manifestUrl,
+            entries: Object.keys(loaded.manifest.entries).length,
+          },
+        });
+        return created;
       });
     } catch (error) {
       if ((error as { code?: string }).code === "P2002") {
@@ -96,21 +113,6 @@ export async function POST(req: NextRequest) {
       }
       throw error;
     }
-
-    await prisma.auditLog.create({
-      data: {
-        tenantId,
-        userId,
-        action: "release.create",
-        resource: `binary_releases/${release.id}`,
-        details: {
-          ring,
-          releaseVersion,
-          manifestUrl,
-          entries: Object.keys(loaded.manifest.entries).length,
-        },
-      },
-    });
 
     return NextResponse.json({ status: "created", release });
   } catch (error) {

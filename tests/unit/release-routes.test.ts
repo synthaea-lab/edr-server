@@ -5,12 +5,17 @@ import { mkdirSync, rmSync, writeFileSync } from "fs";
 import { join } from "path";
 
 // Route logic runs against a mocked Prisma client, so these need no database.
-const db = vi.hoisted(() => ({
-  agent: { findUnique: vi.fn() },
-  binaryRelease: { findFirst: vi.fn(), findMany: vi.fn(), create: vi.fn() },
-  auditLog: { create: vi.fn() },
-  member: { findFirst: vi.fn() },
-}));
+const db = vi.hoisted(() => {
+  const client = {
+    agent: { findUnique: vi.fn() },
+    binaryRelease: { findFirst: vi.fn(), findMany: vi.fn(), create: vi.fn() },
+    auditLog: { create: vi.fn() },
+    member: { findFirst: vi.fn() },
+  };
+  const tx = { ...client, $executeRaw: async () => 0 };
+  // An interactive transaction runs its callback on the same mocked client.
+  return { ...tx, $transaction: async <T>(fn: (t: typeof tx) => Promise<T>) => fn(tx) };
+});
 vi.mock("@/lib/prisma", () => ({ prisma: db }));
 
 import { GET as getManifest } from "@/app/api/release/manifest/route";

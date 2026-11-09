@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { requireTenantAdmin, requireTenantMember } from "@/lib/admin-auth";
 import { z } from "zod";
 import { validatePublishable } from "@/lib/content-publish";
+import { recordAudit } from "@/lib/audit";
 
 const CreateReleaseSchema = z.object({
   ring: z.enum(["canary_0", "canary_1", "canary_2", "prod"]),
@@ -68,19 +69,36 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: publishable.error }, { status: 422 });
     }
 
-    // Create new release
+    // The release and its audit row commit together: a release never goes out unaudited.
     let release;
     try {
-      release = await prisma.contentRelease.create({
-        data: {
+      release = await prisma.$transaction(async (tx) => {
+        const created = await tx.contentRelease.create({
+          data: {
+            tenantId,
+            ring,
+            releaseVersion: nextVersion,
+            manifestUrl,
+            manifestSha256,
+            status: "active",
+            releasedAt: releasedAt ? new Date(releasedAt) : new Date(),
+          },
+        });
+        await recordAudit(tx, {
           tenantId,
-          ring,
-          releaseVersion: nextVersion,
-          manifestUrl,
-          manifestSha256,
-          status: "active",
-          releasedAt: releasedAt ? new Date(releasedAt) : new Date(),
-        },
+          userId,
+          action: "content.release.create",
+          resource: `content_releases/${created.id}`,
+          details: {
+            ring,
+            releaseVersion: nextVersion,
+            manifestUrl,
+            entries: publishable.manifest.entries.length,
+            corrective: restoresVersion !== undefined,
+            restoresVersion: restoresVersion ?? null,
+          },
+        });
+        return created;
       });
     } catch (error) {
       // Another publish read the same highest release and took the number first (the
@@ -93,24 +111,6 @@ export async function POST(req: NextRequest) {
       }
       throw error;
     }
-
-    // Audit log
-    await prisma.auditLog.create({
-      data: {
-        tenantId,
-        userId,
-        action: "content.release.create",
-        resource: `content_releases/${release.id}`,
-        details: {
-          ring,
-          releaseVersion: nextVersion,
-          manifestUrl,
-          entries: publishable.manifest.entries.length,
-          corrective: restoresVersion !== undefined,
-          restoresVersion: restoresVersion ?? null,
-        },
-      },
-    });
 
     return NextResponse.json({
       status: "created",
