@@ -104,8 +104,12 @@ describe.skipIf(!ENDPOINT)("the lake on an S3-compatible server", () => {
     const old = new Date(NOW.getTime() - 60 * DAY);
     const fresh = new Date(NOW.getTime() - 1 * DAY);
     const ev = (at: Date, image: string) => ({ type: "exec", meta: { comm: "bash", timestamp_ns: at.getTime() * 1_000_000 }, image_path: image });
-    await enqueueLakeBatch(prisma, { tenantId: tenant.id, agentId: agent.id, events: [ev(old, "/old/a"), ev(fresh, "/fresh/a"), ev(fresh, "/fresh/b")], receivedAt: NOW });
-    expect(await drainLakeQueue(prisma, store)).toMatchObject({ events: 3, files: 2, remaining: 0 });
+    // The writer drops events already past retention at drain time, so the old day is written by a
+    // drain at the time it happened, as lake-retention.test.ts does, and the fresh day at NOW.
+    await enqueueLakeBatch(prisma, { tenantId: tenant.id, agentId: agent.id, events: [ev(old, "/old/a")], receivedAt: old });
+    expect(await drainLakeQueue(prisma, store, { now: old })).toMatchObject({ events: 1, files: 1, remaining: 0 });
+    await enqueueLakeBatch(prisma, { tenantId: tenant.id, agentId: agent.id, events: [ev(fresh, "/fresh/a"), ev(fresh, "/fresh/b")], receivedAt: NOW });
+    expect(await drainLakeQueue(prisma, store, { now: NOW })).toMatchObject({ events: 2, files: 1, remaining: 0 });
 
     const listed = await store.list(`tenant=${tenant.id}/`);
     expect(listed).toHaveLength(2);
