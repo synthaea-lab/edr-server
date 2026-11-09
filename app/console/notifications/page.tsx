@@ -1,7 +1,6 @@
 import { prisma } from "@/lib/prisma";
-import { auth } from "@/lib/auth";
-import { headers } from "next/headers";
-import { redirect } from "next/navigation";
+import { requireConsoleTenant } from "@/lib/console-session";
+import { NoOrganization } from "@/components/NoOrganization";
 import { channelView } from "@/lib/notify/channels";
 import { currentKey } from "@/lib/notify/secret";
 import { CHANNELS_PER_TENANT, failedCounts } from "@/lib/notify/outbox";
@@ -19,23 +18,9 @@ const STATUS_STYLE: Record<string, string> = {
 const BACKED_UP_AFTER_MS = 5 * 60 * 1000;
 
 export default async function NotificationsPage() {
-  const session = await auth.api.getSession({ headers: await headers() });
-  if (!session) redirect("/login");
-
-  const tenantId = session.session.activeOrganizationId;
-  if (!tenantId) {
-    return (
-      <div className="rounded-lg bg-yellow-50 p-4">
-        <p className="text-sm text-yellow-800">No organization selected. Please contact your administrator.</p>
-      </div>
-    );
-  }
-
-  const member = await prisma.member.findFirst({
-    where: { organizationId: tenantId, userId: session.user.id },
-    select: { role: true },
-  });
-  const isAdmin = (member?.role.split(",").map((r) => r.trim()) ?? []).some((r) => r === "owner" || r === "admin");
+  const caller = await requireConsoleTenant({ withRole: true });
+  if ("noOrganization" in caller) return <NoOrganization />;
+  const { tenantId, isAdmin } = caller;
 
   const now = Date.now();
   const [channels, failed, waiting, stuck, hunts] = await Promise.all([
@@ -47,7 +32,7 @@ export default async function NotificationsPage() {
     }),
     isAdmin ? prisma.hunt.findMany({ where: { tenantId }, select: { id: true, name: true }, orderBy: { name: "asc" } }) : [],
   ]);
-    const configured = currentKey() !== null;
+  const configured = currentKey() !== null;
 
   return (
     <div className="space-y-6">

@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/prisma";
-import { auth } from "@/lib/auth";
+import { requireConsoleTenant } from "@/lib/console-session";
+import { NoOrganization } from "@/components/NoOrganization";
 import { HUNT_RUNS_KEPT } from "@/lib/hunt";
 import {
   describeQuery,
@@ -13,25 +14,14 @@ import {
 } from "@/lib/hunt-view";
 import { RunHuntButton } from "@/components/RunHuntButton";
 import { GraduateHuntButton } from "@/components/GraduateHuntButton";
-import { headers } from "next/headers";
-import { notFound, redirect } from "next/navigation";
+import { notFound } from "next/navigation";
 
 export const dynamic = "force-dynamic";
 
 export default async function HuntPage({ params }: { params: { id: string } }) {
-  const session = await auth.api.getSession({ headers: await headers() });
-  if (!session) redirect("/login");
-
-  const tenantId = session.session.activeOrganizationId;
-  if (!tenantId) {
-    return (
-      <div className="rounded-lg bg-yellow-50 p-4">
-        <p className="text-sm text-yellow-800">
-          No organization selected. Please contact your administrator.
-        </p>
-      </div>
-    );
-  }
+  const caller = await requireConsoleTenant();
+  if ("noOrganization" in caller) return <NoOrganization />;
+  const { tenantId, userId } = caller;
 
   // Scoped to the session's tenant: another tenant's hunt is a 404, never its contents.
   const hunt = await prisma.hunt.findFirst({ where: { id: params.id, tenantId } });
@@ -85,7 +75,7 @@ export default async function HuntPage({ params }: { params: { id: string } }) {
           <dd className="mt-1 text-gray-900">{describeSchedule(hunt.scheduleMinutes, hunt.active)}</dd>
           <dt className="mt-3 text-xs uppercase text-gray-500">Created</dt>
           <dd className="mt-1 text-gray-900">
-            {formatTime(hunt.createdAt)} by <span title={hunt.ownerId}>{ownerLabel(hunt.ownerId, session.user?.id)}</span>
+            {formatTime(hunt.createdAt)} by <span title={hunt.ownerId}>{ownerLabel(hunt.ownerId, userId)}</span>
           </dd>
         </div>
       </dl>

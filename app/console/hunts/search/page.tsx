@@ -1,11 +1,10 @@
 import { prisma } from "@/lib/prisma";
-import { auth } from "@/lib/auth";
+import { requireConsoleTenant } from "@/lib/console-session";
+import { NoOrganization } from "@/components/NoOrganization";
 import { SEVERITIES } from "@/lib/hunt";
 import { CASE_STATUSES, MAX_CONCURRENT_SEARCHES_PER_TENANT, searchFailure, searchWithinLimit, type SearchPage } from "@/lib/hunt-search";
 import { searchFormFromParams, searchHref, searchRequestFromParams, type SearchParams } from "@/lib/hunt-search-form";
 import { SearchResults } from "@/components/SearchResults";
-import { headers } from "next/headers";
-import { redirect } from "next/navigation";
 
 export const dynamic = "force-dynamic";
 
@@ -17,17 +16,9 @@ const LABEL = "block text-sm font-medium text-gray-700";
  * shared and a page of results is another link. The same validation and limits as the API.
  */
 export default async function HuntSearchPage({ searchParams }: { searchParams: SearchParams }) {
-  const session = await auth.api.getSession({ headers: await headers() });
-  if (!session) redirect("/login");
-
-  const tenantId = session.session.activeOrganizationId;
-  if (!tenantId) {
-    return (
-      <div className="rounded-lg bg-yellow-50 p-4">
-        <p className="text-sm text-yellow-800">No organization selected. Please contact your administrator.</p>
-      </div>
-    );
-  }
+  const caller = await requireConsoleTenant();
+  if ("noOrganization" in caller) return <NoOrganization />;
+  const { tenantId } = caller;
 
   const form = searchFormFromParams(searchParams);
   const asked = searchRequestFromParams(searchParams);

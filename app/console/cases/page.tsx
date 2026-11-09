@@ -1,30 +1,15 @@
 import { prisma } from "@/lib/prisma";
-import { auth } from "@/lib/auth";
+import { requireConsoleTenant } from "@/lib/console-session";
+import { NoOrganization } from "@/components/NoOrganization";
 import { CaseList } from "@/components/CaseList";
-import { headers } from "next/headers";
-import { redirect } from "next/navigation";
 
 // Read per request: the session needs a database, which does not exist at build time.
 export const dynamic = "force-dynamic";
 
 export default async function CasesPage() {
-  const session = await auth.api.getSession({ headers: await headers() });
-
-  if (!session) {
-    redirect("/login");
-  }
-
-  const tenantId = session.session.activeOrganizationId;
-
-  if (!tenantId) {
-    return (
-      <div className="rounded-lg bg-yellow-50 p-4">
-        <p className="text-sm text-yellow-800">
-          No organization selected. Please contact your administrator.
-        </p>
-      </div>
-    );
-  }
+  const caller = await requireConsoleTenant();
+  if ("noOrganization" in caller) return <NoOrganization />;
+  const { tenantId } = caller;
 
   const cases = await prisma.case.findMany({
     where: { tenantId },

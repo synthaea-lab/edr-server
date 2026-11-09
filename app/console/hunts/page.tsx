@@ -1,10 +1,9 @@
 import { DeleteHuntButton } from "@/components/DeleteHuntButton";
 import { prisma } from "@/lib/prisma";
-import { auth } from "@/lib/auth";
+import { requireConsoleTenant } from "@/lib/console-session";
+import { NoOrganization } from "@/components/NoOrganization";
 import { describeQuery, describeSchedule, formatTime, runState, STATE_LABEL, STATE_STYLE } from "@/lib/hunt-view";
 import { newestRunsByHunt } from "@/lib/hunt-runs";
-import { headers } from "next/headers";
-import { redirect } from "next/navigation";
 
 export const dynamic = "force-dynamic";
 
@@ -12,19 +11,9 @@ export const dynamic = "force-dynamic";
 const LIST_LIMIT = 200;
 
 export default async function HuntsPage() {
-  const session = await auth.api.getSession({ headers: await headers() });
-  if (!session) redirect("/login");
-
-  const tenantId = session.session.activeOrganizationId;
-  if (!tenantId) {
-    return (
-      <div className="rounded-lg bg-yellow-50 p-4">
-        <p className="text-sm text-yellow-800">
-          No organization selected. Please contact your administrator.
-        </p>
-      </div>
-    );
-  }
+  const caller = await requireConsoleTenant();
+  if ("noOrganization" in caller) return <NoOrganization />;
+  const { tenantId } = caller;
 
   const found = await prisma.hunt.findMany({
     where: { tenantId },

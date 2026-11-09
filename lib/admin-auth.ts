@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { memberRole } from "@/lib/members";
 import { prisma } from "@/lib/prisma";
 import { AuthenticationError, getTenantId, getUserId } from "@/lib/tenant";
 
@@ -59,12 +60,7 @@ export async function requireTenantAdmin(req: NextRequest): Promise<TenantCaller
   const caller = requireTenantMember(req);
   if ("response" in caller) return caller;
 
-  const member = await prisma.member.findFirst({
-    where: { organizationId: caller.tenantId, userId: caller.userId },
-    select: { role: true },
-  });
-
-  if (!isAdminRole(member?.role)) {
+  if (!isAdminRole(await memberRole(prisma, caller.tenantId, caller.userId))) {
     return {
       response: NextResponse.json({ error: "Admin role required" }, { status: 403 }),
     };

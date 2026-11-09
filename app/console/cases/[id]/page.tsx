@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/prisma";
-import { auth } from "@/lib/auth";
+import { requireConsoleTenant } from "@/lib/console-session";
+import { NoOrganization } from "@/components/NoOrganization";
 import { severityColor, statusColor } from "@/lib/case-display";
 import { GenerateNarrativeButton } from "@/components/GenerateNarrativeButton";
 import {
@@ -9,8 +10,7 @@ import {
   prevalenceKey,
   triageLines,
 } from "@/lib/prevalence";
-import { headers } from "next/headers";
-import { redirect, notFound } from "next/navigation";
+import { notFound } from "next/navigation";
 
 interface NarrativeCitation {
   detectionId: string;
@@ -18,23 +18,9 @@ interface NarrativeCitation {
 }
 
 export default async function CaseDetailPage({ params }: { params: { id: string } }) {
-  const session = await auth.api.getSession({ headers: await headers() });
-
-  if (!session) {
-    redirect("/login");
-  }
-
-  const tenantId = session.session.activeOrganizationId;
-
-  if (!tenantId) {
-    return (
-      <div className="rounded-lg bg-yellow-50 p-4">
-        <p className="text-sm text-yellow-800">
-          No organization selected. Please contact your administrator.
-        </p>
-      </div>
-    );
-  }
+  const caller = await requireConsoleTenant();
+  if ("noOrganization" in caller) return <NoOrganization />;
+  const { tenantId } = caller;
 
   const case_ = await prisma.case.findFirst({
     where: { id: params.id, tenantId },
