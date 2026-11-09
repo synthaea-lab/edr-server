@@ -1,7 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { verifyCronRequest } from "@/lib/cron-auth";
 import { prisma } from "@/lib/prisma";
-import { findOpenSilentCases, silentCaseDescription, silentCaseTitle } from "@/lib/silent-agent-case";
+import {
+  caseNamesAgent,
+  findOpenCasesNamingAgents,
+  silentCaseDescription,
+  silentCaseTitle,
+} from "@/lib/silent-agent-case";
 
 const SILENCE_THRESHOLD_MS = 5 * 60 * 1000; // 5 minutes
 
@@ -29,12 +34,13 @@ export async function GET(req: NextRequest) {
 
     let casesCreated = 0;
 
-    // Open one case per silent agent that has none open yet.
+    // Open one case per silent agent that no open case names yet. A case opened in this run
+    // joins the list, so the agents after it are checked against it as well.
     for (const [tenantId, agents] of Array.from(byTenant.entries())) {
-      const open = await findOpenSilentCases(prisma, tenantId, agents.map((a) => a.enrollmentId));
+      const open = await findOpenCasesNamingAgents(prisma, tenantId, agents);
       for (const agent of agents) {
-        if (open.has(agent.enrollmentId)) continue;
-        await prisma.case.create({
+        if (open.some((c) => caseNamesAgent(c, agent))) continue;
+        const created = await prisma.case.create({
           data: {
             tenantId,
             title: silentCaseTitle(agent),
@@ -42,7 +48,9 @@ export async function GET(req: NextRequest) {
             severity: "high",
             status: "open",
           },
+          select: { id: true, title: true, description: true },
         });
+        open.push(created);
         casesCreated++;
       }
     }
