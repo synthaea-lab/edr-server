@@ -97,7 +97,24 @@ jobs:
         run: npx vitest run tests/unit
       # One file at a time (`fileParallelism: false` in vitest.config.ts, #541):
       # every integration file clears the same database.
-      - name: integration tests (PostgreSQL)
+      # An S3-compatible server for tests/integration/lake-s3.test.ts, which skips itself without
+      # LAKE_S3_TEST_ENDPOINT. Without this step that file never ran in CI and went stale (#4).
+      # SeaweedFS 4.50, pinned by digest: the server `-s3` listens on 8333 and checks no credentials.
+      - name: object store (SeaweedFS)
+        run: |
+          docker run -d --name lake-s3 -p 8333:8333 \
+            chrislusf/seaweedfs:4.50@sha256:b2e51562743be5637381a82eeeee4872eb2f86994b723d25a1bbd171855fe18d \
+            server -s3
+          for i in $(seq 1 30); do
+            if curl -s -o /dev/null http://127.0.0.1:8333/; then exit 0; fi
+            sleep 2
+          done
+          docker logs lake-s3
+          echo "SeaweedFS did not answer on 8333" >&2
+          exit 1
+      - name: integration tests (PostgreSQL, S3 archive)
+        env:
+          LAKE_S3_TEST_ENDPOINT: http://127.0.0.1:8333
         run: npm run test:integration
 
   # Unit suites on every OS developers use (no database needed). The integration suites
