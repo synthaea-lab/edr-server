@@ -3,13 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { damageManifestOf } from "@/lib/damage-manifest";
 import { requireTenantMember } from "@/lib/admin-auth";
 import { NotFound, route } from "@/lib/http/handler";
-import {
-  getPrevalenceBatch,
-  lookedUpKeys,
-  observationsOfDetections,
-  prevalenceKey,
-  triageLines,
-} from "@/lib/prevalence";
+import { loadCaseDetail } from "@/lib/case-detail";
 
 /**
  * GET /api/cases/[id]
@@ -33,37 +27,9 @@ export const GET = route(
     const authed = requireTenantMember(req);
     if ("response" in authed) return authed.response;
     const { tenantId } = authed;
-    const caseId = params.id;
+    const detail = await loadCaseDetail(prisma, tenantId, params.id);
+    if (!detail) throw new NotFound("Case not found");
 
-    const case_ = await prisma.case.findFirst({
-      where: { id: caseId, tenantId },
-      include: { detections: { orderBy: { timestamp: "desc" } } },
-    });
-
-    if (!case_) throw new NotFound("Case not found");
-
-    const { detections, ...caseFields } = case_;
-
-    const latestNarrative = await prisma.caseNarrative.findFirst({
-      where: { caseId },
-      orderBy: { generatedAt: "desc" },
-    });
-
-    const narrative = latestNarrative
-      ? {
-          ...latestNarrative,
-          stale: detections.some((d) => d.updatedAt > latestNarrative.generatedAt),
-        }
-      : null;
-
-    const caseObservations = observationsOfDetections(detections);
-    const found = await getPrevalenceBatch(prisma, tenantId, caseObservations);
-    const lookedUp = new Set(lookedUpKeys(caseObservations).map((o) => prevalenceKey(o.kind, o.key)));
-    const prevalence = Object.fromEntries(
-      detections.map((d) => [d.id, triageLines(observationsOfDetections([d]), found, lookedUp)])
-    );
-
-    const damageManifest = damageManifestOf(detections);
-    return NextResponse.json({ case: caseFields, detections, narrative, prevalence, damageManifest });
+    return NextResponse.json({ ...detail, damageManifest: damageManifestOf(detail.detections) });
   }
 );

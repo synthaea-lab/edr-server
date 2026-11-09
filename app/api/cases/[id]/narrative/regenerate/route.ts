@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
+import { citationsJson } from "@/lib/case-narrative";
 import { requireTenantMember } from "@/lib/admin-auth";
 import { BadRequest, NotFound, route } from "@/lib/http/handler";
 import { buildEvidenceGraph } from "@/assistant/evidence-graph";
@@ -35,7 +35,7 @@ export const POST = route(
         tenantId,
         caseId,
         narrative: result.text,
-        citations: result.citations as unknown as Prisma.InputJsonValue,
+        citations: citationsJson(result.citations),
         model: result.model,
         provider: result.provider,
         promptVersion: result.promptVersion,

@@ -1,7 +1,15 @@
 import { beforeEach, afterAll, describe, expect, it, vi } from "vitest";
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { cleanDatabase, createTestAgent, createTestTenant, prisma } from "../helpers/db";
+import {
+  cleanDatabase,
+  createTestAgent,
+  createTestCase,
+  createTestCaseNarrative,
+  createTestDetection,
+  createTestTenant,
+  prisma,
+} from "../helpers/db";
 import { extractObservations, recordObservations } from "@/lib/prevalence";
 
 // The page is a server component: it asks better-auth for the session and renders the case with
@@ -106,6 +114,51 @@ describe("case page, fleet triage lines (real database, server-rendered)", () =>
     activeOrganizationId = tenant.id;
 
     expect(await renderCase(case_.id)).not.toContain("Fleet prevalence");
+  });
+
+  it("links each narrative citation to its detection and flags a narrative older than the evidence", async () => {
+    const tenant = await createTestTenant();
+    const a = await createTestAgent(tenant.id);
+    const case_ = await createTestCase(tenant.id);
+    await createTestCaseNarrative(tenant.id, case_.id, {
+      narrative: "The shell ran a payload.",
+      generatedAt: new Date(Date.now() - 60_000),
+    });
+    const detection = await createTestDetection(tenant.id, a.id, { caseId: case_.id });
+    await prisma.caseNarrative.updateMany({
+      where: { caseId: case_.id },
+      data: { citations: [{ detectionId: detection.id, claim: "ran a payload" }] },
+    });
+    activeOrganizationId = tenant.id;
+
+    const html = await renderCase(case_.id);
+
+    expect(html).toContain("The shell ran a payload.");
+    expect(html).toContain(`href="#detection-${detection.id}"`);
+    expect(html).toContain('title="ran a payload"');
+    expect(html).toContain("Evidence has changed since this narrative was generated.");
+  });
+
+  it("does not flag a narrative generated after its evidence", async () => {
+    const tenant = await createTestTenant();
+    const a = await createTestAgent(tenant.id);
+    const case_ = await createTestCase(tenant.id);
+    await createTestDetection(tenant.id, a.id, { caseId: case_.id });
+    await createTestCaseNarrative(tenant.id, case_.id, { generatedAt: new Date(Date.now() + 60_000) });
+    activeOrganizationId = tenant.id;
+
+    const html = await renderCase(case_.id);
+
+    expect(html).toContain("Test narrative.");
+    expect(html).not.toContain("Evidence has changed");
+  });
+
+  it("offers to generate a narrative when none exists", async () => {
+    const tenant = await createTestTenant();
+    const case_ = await createTestCase(tenant.id);
+    activeOrganizationId = tenant.id;
+
+    expect(await renderCase(case_.id)).toContain("No narrative generated yet.");
   });
 
   it("does not render another tenant's case", async () => {

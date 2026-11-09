@@ -3,50 +3,20 @@ import { requireConsoleTenant } from "@/lib/console-session";
 import { NoOrganization } from "@/components/NoOrganization";
 import { severityColor, statusColor } from "@/lib/case-display";
 import { GenerateNarrativeButton } from "@/components/GenerateNarrativeButton";
-import {
-  getPrevalenceBatch,
-  lookedUpKeys,
-  observationsOfDetections,
-  prevalenceKey,
-  triageLines,
-} from "@/lib/prevalence";
+import { loadCaseDetail } from "@/lib/case-detail";
+import type { CaseDetail } from "@/lib/case-detail";
 import { notFound } from "next/navigation";
-
-interface NarrativeCitation {
-  detectionId: string;
-  claim: string;
-}
 
 export default async function CaseDetailPage({ params }: { params: { id: string } }) {
   const caller = await requireConsoleTenant();
   if ("noOrganization" in caller) return <NoOrganization />;
   const { tenantId } = caller;
 
-  const case_ = await prisma.case.findFirst({
-    where: { id: params.id, tenantId },
-    include: { detections: { orderBy: { timestamp: "desc" } } },
-  });
+  const detail = await loadCaseDetail(prisma, tenantId, params.id);
+  if (!detail) notFound();
 
-  if (!case_) {
-    notFound();
-  }
-
-  const narrative = await prisma.caseNarrative.findFirst({
-    where: { caseId: case_.id },
-    orderBy: { generatedAt: "desc" },
-  });
-
-  const stale = narrative
-    ? case_.detections.some((d) => d.updatedAt > narrative.generatedAt)
-    : false;
-
-  // "Seen on N hosts, first <date>" for what each detection's event touched
-  // (issue #76): one grouped lookup for the whole case, not one per detection.
-  const caseObservations = observationsOfDetections(case_.detections);
-  const prevalence = await getPrevalenceBatch(prisma, tenantId, caseObservations);
-  const lookedUp = new Set(lookedUpKeys(caseObservations).map((o) => prevalenceKey(o.kind, o.key)));
-
-  const citations = (narrative?.citations as unknown as NarrativeCitation[] | null) ?? [];
+  const { case: case_, detections, narrative, prevalence } = detail;
+  const citations = narrative?.citations ?? [];
 
   return (
     <div className="space-y-6">
@@ -84,7 +54,7 @@ export default async function CaseDetailPage({ params }: { params: { id: string 
               {new Date(narrative.generatedAt).toLocaleString()} · may be inaccurate — verify
               against the linked evidence below.
             </p>
-            {stale && (
+            {narrative.stale && (
               <p className="mt-2 text-xs font-medium text-amber-700 bg-amber-100 border border-amber-200 rounded px-2 py-1 inline-block">
                 Evidence has changed since this narrative was generated.
               </p>
@@ -117,10 +87,10 @@ export default async function CaseDetailPage({ params }: { params: { id: string 
 
       <section>
         <h3 className="text-sm font-semibold text-gray-900 mb-2">
-          Evidence ({case_.detections.length})
+          Evidence ({detections.length})
         </h3>
         <div className="space-y-2">
-          {case_.detections.map((detection) => (
+          {detections.map((detection) => (
             <div
               key={detection.id}
               id={`detection-${detection.id}`}
@@ -137,11 +107,7 @@ export default async function CaseDetailPage({ params }: { params: { id: string 
               <p className="mt-1 text-xs text-gray-500">
                 {new Date(detection.timestamp).toLocaleString()}
               </p>
-              <PrevalenceLines
-                observations={observationsOfDetections([detection])}
-                found={prevalence}
-                lookedUp={lookedUp}
-              />
+              <PrevalenceLines triage={prevalence[detection.id]} />
             </div>
           ))}
         </div>
@@ -151,16 +117,8 @@ export default async function CaseDetailPage({ params }: { params: { id: string 
 }
 
 /** The triage lines under one detection; renders nothing for an event with no hash, path, transition or domain. */
-function PrevalenceLines({
-  observations,
-  found,
-  lookedUp,
-}: {
-  observations: ReturnType<typeof observationsOfDetections>;
-  found: Awaited<ReturnType<typeof getPrevalenceBatch>>;
-  lookedUp: Set<string>;
-}) {
-  const { lines, omitted } = triageLines(observations, found, lookedUp);
+function PrevalenceLines({ triage }: { triage: CaseDetail["prevalence"][string] }) {
+  const { lines, omitted } = triage;
   if (lines.length === 0) return null;
   return (
     <ul className="mt-2 space-y-0.5 text-xs text-gray-600" aria-label="Fleet prevalence">
