@@ -68,6 +68,20 @@ export function lakeStoreFromEnv(env: Env = process.env): LakeStore | null {
   return store;
 }
 
+/**
+ * What the compactor needs: the store it writes and deletes through, and a reader for the files it
+ * merges, or null when the lake is off. On S3 the reader uses the WRITER's credentials, not the query
+ * side's read-only pair (ADR-0041, decision 4 is about the search): the compactor already deletes
+ * through the writer's, and a merge must read what it replaces. That pair therefore needs `s3:GetObject`.
+ */
+export function lakeCompactionIoFromEnv(env: Env = process.env): { store: LakeStore; reader: LakeReader } | null {
+  const store = lakeStoreFromEnv(env);
+  if (store === null) return null;
+  if (store instanceof FsLakeStore) return { store, reader: store };
+  const s = s3Settings(env);
+  return { store, reader: new S3LakeReader({ bucket: s.bucket, prefix: s.prefix, client: s3Client(s) }) };
+}
+
 const READER_CREDS = { id: "LAKE_S3_READER_ACCESS_KEY_ID", secret: "LAKE_S3_READER_SECRET_ACCESS_KEY" };
 let cachedReader: { key: string; reader: LakeReader } | null = null;
 
