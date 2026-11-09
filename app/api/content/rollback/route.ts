@@ -2,7 +2,12 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireTenantAdmin } from "@/lib/admin-auth";
 import { z } from "zod";
-import { correctiveReleaseAdvice } from "@/lib/content-rollback";
+import { recordAudit } from "@/lib/audit";
+import {
+  correctiveReleaseAdvice,
+  findRollbackReleases,
+  lockContentRing,
+} from "@/lib/content-rollback";
 
 const RollbackSchema = z.object({
   ring: z.enum(["canary_0", "canary_1", "canary_2", "prod"]),
@@ -44,76 +49,37 @@ export async function POST(req: NextRequest) {
 
     const { ring, targetVersion, reason } = validation.data;
 
-    // Find current active/halted release
-    const currentRelease = await prisma.contentRelease.findFirst({
-      where: {
-        tenantId,
-        ring,
-        status: { in: ["active", "halted"] },
-      },
-      orderBy: { releaseVersion: "desc" },
-    });
+    // The reads and the writes run in one transaction under the ring's lock: a failure between
+    // the two status updates must not leave the ring with no active release, a rollback must not
+    // land without its audit row, and two rollbacks of a ring must not act on the same read.
+    const outcome = await prisma.$transaction(async (tx) => {
+      await lockContentRing(tx, tenantId, ring);
 
-    if (!currentRelease) {
-      return NextResponse.json(
-        { error: "No current release found for ring" },
-        { status: 404 }
+      const found = await findRollbackReleases(tx, { tenantId, ring, targetVersion });
+      if ("error" in found) return found;
+      const { currentRelease, targetRelease } = found;
+
+      // The corrective release must beat every release of the ring, not only the active one.
+      const highest = await tx.contentRelease.findFirst({
+        where: { tenantId, ring },
+        orderBy: { releaseVersion: "desc" },
+        select: { releaseVersion: true },
+      });
+      const advice = correctiveReleaseAdvice(
+        highest?.releaseVersion ?? currentRelease.releaseVersion,
+        targetRelease.releaseVersion,
       );
-    }
 
-    // Find target release (either specified or previous)
-    const targetRelease = await prisma.contentRelease.findFirst({
-      where: {
-        tenantId,
-        ring,
-        releaseVersion: targetVersion || {
-          lt: currentRelease.releaseVersion,
-        },
-      },
-      orderBy: { releaseVersion: "desc" },
-    });
+      const rolledBackRelease = await tx.contentRelease.update({
+        where: { id: currentRelease.id },
+        data: { status: "rolled_back" },
+      });
+      const activatedRelease = await tx.contentRelease.update({
+        where: { id: targetRelease.id },
+        data: { status: "active" },
+      });
 
-    if (!targetRelease) {
-      return NextResponse.json(
-        { error: "No previous release found to rollback to" },
-        { status: 404 }
-      );
-    }
-
-    // Prevent rolling back to same version
-    if (targetRelease.id === currentRelease.id) {
-      return NextResponse.json(
-        { error: "Cannot rollback to current version" },
-        { status: 400 }
-      );
-    }
-
-    // The corrective release must beat every release of the ring, not only the active one.
-    const highest = await prisma.contentRelease.findFirst({
-      where: { tenantId, ring },
-      orderBy: { releaseVersion: "desc" },
-      select: { releaseVersion: true },
-    });
-    const advice = correctiveReleaseAdvice(
-      highest?.releaseVersion ?? currentRelease.releaseVersion,
-      targetRelease.releaseVersion,
-    );
-
-    // Mark current release as rolled_back
-    const rolledBackRelease = await prisma.contentRelease.update({
-      where: { id: currentRelease.id },
-      data: { status: "rolled_back" },
-    });
-
-    // Activate target release
-    const activatedRelease = await prisma.contentRelease.update({
-      where: { id: targetRelease.id },
-      data: { status: "active" },
-    });
-
-    // Audit log
-    await prisma.auditLog.create({
-      data: {
+      await recordAudit(tx, {
         tenantId,
         userId,
         action: "content.release.rollback",
@@ -125,8 +91,15 @@ export async function POST(req: NextRequest) {
           reason: reason || "Manual rollback",
           correctiveReleaseVersion: advice.releaseVersion,
         },
-      },
+      });
+
+      return { rolledBackRelease, activatedRelease, advice };
     });
+
+    if ("error" in outcome) {
+      return NextResponse.json({ error: outcome.error }, { status: outcome.status });
+    }
+    const { rolledBackRelease, activatedRelease, advice } = outcome;
 
     return NextResponse.json({
       status: "rolled_back",

@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireTenantAdmin } from "@/lib/admin-auth";
 import { z } from "zod";
+import { recordAudit } from "@/lib/audit";
+import { lockContentRing } from "@/lib/content-rollback";
 
 const HaltSchema = z.object({
   ring: z.enum(["canary_0", "canary_1", "canary_2", "prod"]),
@@ -38,32 +40,28 @@ export async function POST(req: NextRequest) {
 
     const { ring, reason } = validation.data;
 
-    // Find latest active release for this tenant + ring
-    const release = await prisma.contentRelease.findFirst({
-      where: {
-        tenantId,
-        ring,
-        status: "active",
-      },
-      orderBy: { releaseVersion: "desc" },
-    });
+    // One transaction under the ring's lock: a halt never lands without its audit row, and it
+    // never races a rollback of the same ring.
+    const haltedRelease = await prisma.$transaction(async (tx) => {
+      await lockContentRing(tx, tenantId, ring);
 
-    if (!release) {
-      return NextResponse.json(
-        { error: "No active release found for ring" },
-        { status: 404 }
-      );
-    }
+      // Find latest active release for this tenant + ring
+      const release = await tx.contentRelease.findFirst({
+        where: {
+          tenantId,
+          ring,
+          status: "active",
+        },
+        orderBy: { releaseVersion: "desc" },
+      });
+      if (!release) return null;
 
-    // Update release status to halted
-    const haltedRelease = await prisma.contentRelease.update({
-      where: { id: release.id },
-      data: { status: "halted" },
-    });
+      const halted = await tx.contentRelease.update({
+        where: { id: release.id },
+        data: { status: "halted" },
+      });
 
-    // Audit log
-    await prisma.auditLog.create({
-      data: {
+      await recordAudit(tx, {
         tenantId,
         userId,
         action: "content.release.halt",
@@ -73,8 +71,16 @@ export async function POST(req: NextRequest) {
           releaseVersion: release.releaseVersion,
           reason: reason || "Manual halt",
         },
-      },
+      });
+      return halted;
     });
+
+    if (!haltedRelease) {
+      return NextResponse.json(
+        { error: "No active release found for ring" },
+        { status: 404 }
+      );
+    }
 
     return NextResponse.json({
       status: "halted",

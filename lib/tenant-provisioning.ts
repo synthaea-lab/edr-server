@@ -1,5 +1,6 @@
 import { randomUUID } from "crypto";
 import { PrismaClient } from "@prisma/client";
+import { recordAudit } from "@/lib/audit";
 
 /**
  * Creates a tenant and its paired better-auth organization together (#821): nothing else in
@@ -44,14 +45,12 @@ export async function provisionTenant(
       // tenant-scoped role check can gate (review of #829). Written in the same
       // transaction so a rolled-back provision leaves no orphaned entry; skipped
       // without an owner (a test-only path with no caller to attribute it to).
-      await tx.auditLog.create({
-        data: {
-          tenantId: tenant.id,
-          userId: owner.userId,
-          action: "tenant.create",
-          resource: `tenants/${tenant.id}`,
-          details: { name: tenant.name },
-        },
+      await recordAudit(tx, {
+        tenantId: tenant.id,
+        userId: owner.userId,
+        action: "tenant.create",
+        resource: `tenants/${tenant.id}`,
+        details: { name: tenant.name },
       });
     }
     return { id: tenant.id, name: tenant.name };

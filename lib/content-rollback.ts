@@ -1,3 +1,5 @@
+import { ContentRelease, Prisma } from "@prisma/client";
+
 /**
  * What a content rollback does and does not do (ADR-0032, issue #665).
  *
@@ -43,4 +45,55 @@ export function correctiveReleaseAdvice(
       `content (release-tool roll-forward --from <release ${restoreVersion} manifest> ` +
       `--release-version ${releaseVersion}).`,
   };
+}
+
+/**
+ * Serializes the control-plane writes to one tenant's ring (halt, rollback) for the rest of the
+ * transaction `tx`, so two of them never act on the same read of the ring's releases.
+ */
+export async function lockContentRing(
+  tx: Prisma.TransactionClient,
+  tenantId: string,
+  ring: string
+): Promise<void> {
+  await tx.$executeRaw(
+    Prisma.sql`SELECT pg_advisory_xact_lock(hashtext(${`content_ring:${tenantId}:${ring}`}))`
+  );
+}
+
+export type RollbackReleases =
+  | { currentRelease: ContentRelease; targetRelease: ContentRelease }
+  | { error: string; status: 400 | 404 };
+
+/**
+ * The release a rollback of `ring` retires (the latest active or halted one) and the one it
+ * reactivates (`targetVersion`, or else the one just below), or why there is no such pair.
+ */
+export async function findRollbackReleases(
+  tx: Pick<Prisma.TransactionClient, "contentRelease">,
+  { tenantId, ring, targetVersion }: { tenantId: string; ring: string; targetVersion?: number }
+): Promise<RollbackReleases> {
+  const currentRelease = await tx.contentRelease.findFirst({
+    where: { tenantId, ring, status: { in: ["active", "halted"] } },
+    orderBy: { releaseVersion: "desc" },
+  });
+  if (!currentRelease) {
+    return { error: "No current release found for ring", status: 404 };
+  }
+
+  const targetRelease = await tx.contentRelease.findFirst({
+    where: {
+      tenantId,
+      ring,
+      releaseVersion: targetVersion || { lt: currentRelease.releaseVersion },
+    },
+    orderBy: { releaseVersion: "desc" },
+  });
+  if (!targetRelease) {
+    return { error: "No previous release found to rollback to", status: 404 };
+  }
+  if (targetRelease.id === currentRelease.id) {
+    return { error: "Cannot rollback to current version", status: 400 };
+  }
+  return { currentRelease, targetRelease };
 }
