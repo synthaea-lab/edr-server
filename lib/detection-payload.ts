@@ -81,7 +81,7 @@ const headTailString = (maxBytes: number) =>
 // strings are the monitored process's own (command lines, paths, names), so they are cut, never
 // refused, for the same reason as the title (#1060). Bounds from what the agent emits:
 // - one event per detection, except the ransomware damage manifest: the trigger plus at most
-//   100 renames and deletions (`DAMAGE_MANIFEST_MAX`, agent/src/sink.rs, which mirrors
+//   100 renames and deletions (`DAMAGE_MANIFEST_MAX`, apps/agent/src/sink/mod.rs, which mirrors
 //   `MAX_EVENTS` and is pinned to it by a test), so 101;
 // - a string carries at most a command line, which the title already bounds at 64 KiB;
 // - the longest array is a Linux argv. Once #1116 lands the sensor bounds it at capture to
@@ -261,7 +261,7 @@ function deeperThan(body: unknown, limit: number): boolean {
   return false;
 }
 
-// The agent cuts feed names and versions at 64 Rust `char`s (`label`, agent/src/ioc.rs), which are
+// The agent cuts feed names and versions at 64 Rust `char`s (`label`, apps/agent/src/ioc.rs), which are
 // code points; zod's `.max` counts UTF-16 units, so a non-BMP name the agent let through would be
 // refused here and its detection lost.
 const MAX_FEED_LABEL_CHARS = 64;
@@ -302,7 +302,7 @@ const SourceSchema = z.discriminatedUnion("engine", [
 // engine and marker tags (`BAYES`, `IOC`, `LOG-SOURCE`, `RESPONSE-*`), and at most 23
 // characters for a joined compound. YARA and Sigma only ever yield `T\d{4}(\.\d{3})?`.
 // One element of the structured `techniques` list: the agent splits `/`-joined compound
-// tags before upload (`techniques_from`, agent/src/sink.rs), so an element has no `/`.
+// tags before upload (`techniques_from`, apps/agent/src/sink/mod.rs), so an element has no `/`.
 const TechniqueIdSchema = z.string().regex(/^[A-Za-z0-9._-]{1,64}$/);
 // The legacy single `technique` string is the rule's tag as-is, compound `/` included.
 const LegacyTechniqueSchema = z.string().regex(/^[A-Za-z0-9._/-]{1,128}$/);
