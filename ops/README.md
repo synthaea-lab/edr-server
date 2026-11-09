@@ -1,12 +1,20 @@
-# server/ops — Fleet Operations Dashboard
+# Fleet operations
 
-The operator's view: an EDR that cannot see its own health degrades silently.
+The operator's view of the fleet, at `/console/ops`: an EDR that cannot see its own health
+degrades silently.
 
-- **Agent health**: version spread across rings, last check-in, sensor status per
-  capability (from `Capabilities` + conformance), watchdog restarts, tamper events
-- **Telemetry accounting**: the observable-loss counters the agent already keeps —
-  spool drops, scan-queue sheds, bounded-map evictions, ring-buffer drops — surfaced
-  per host and fleet-wide, with alerting on anomalies (a host that stops losing AND
-  stops sending is a tamper signal)
-- **Rollout control**: ring status for binaries/content/models, halt/rollback state
-- **Ingest health**: lag, volume by event type, per-tenant quotas
+Built:
+
+- **Agent health.** Status per agent (healthy, degraded, silent), version, ring, last check-in and
+  silent sensors, from heartbeats and health beacons.
+- **Ingest health.** Per-agent upload volume, malformed entries dropped, and the loss the agent
+  reports.
+- **Rollout control.** The status of each content ring, with halt and rollback for a tenant owner
+  or admin. Every action is audited.
+
+Planned: alerting on telemetry-loss anomalies (a host that stops losing events and stops sending
+is a tamper signal) and per-tenant ingest quotas.
+
+Code: `app/console/ops/`, `app/api/ops/`, `lib/fleet-health.ts`, `lib/ingest-stats.ts`,
+`lib/rings.ts`, `lib/ring-actions.ts`. Tests: `tests/integration/fleet-health.test.ts`,
+`ops-ring-controls.test.ts`, `ring-status.test.ts`.

@@ -1,21 +1,23 @@
-# server/ingest
+# Agent ingest
 
-Agent-facing ingestion service: terminates agent mTLS connections, validates and stores
-uploaded events and detections, and tracks agent heartbeats (silence is a detection).
+The endpoints enrolled agents call, behind the mTLS proxy. nginx verifies the client certificate
+and the application identifies the agent by its common name; a request that did not come through
+the proxy is refused.
 
-Routes (`server/app/api/`): `ingest/events` (batches of `schema::Event` from the agent
-spool), `ingest/heartbeat`, `ingest/detection`; events and heartbeat also have
-`/api/v1/ingest/` aliases. Events are counted
-into fleet prevalence; they are kept only when the telemetry lake is on (`LAKE_DIR`, see
-`server/datalake/README.md`), otherwise they are not retained.
+| Route | Accepts |
+| --- | --- |
+| `POST /api/ingest/events` (also `/api/v1/ingest/events`) | Batches of events from the agent's spool |
+| `POST /api/ingest/heartbeat` (also `/api/v1/ingest/heartbeat`) | Heartbeats and health beacons |
+| `POST /api/ingest/detection` | One detection, in the agent's `Detection` JSON shape |
+| `POST /api/ingest/decoy` | The SHA-256 of decoy credentials the agent planted; a later request that presents one raises an alarm |
 
-`POST /api/ingest/detection` accepts the JSON shape of `schema::Detection`
-(`timestamp_ns`, `severity`, `title`, `source`, optional `score` and
-`attributions`, `techniques`, `events`). It keeps the previous single-event
-payload for older agents. The first event is stored in `Detection.event`; the
-remaining events and the structured fields are retained in `Detection.meta`.
-The correlator's `source.case_id` is retained there as an agent-local identity.
-The current producer derives it from `ppid:comm`, which can recur after process
-or agent restarts. `Detection.caseId` is a foreign key to a server `Case` UUID;
-direct grouping needs a stable, collision-resistant source key and a
-tenant-and-agent-scoped mapping to that UUID.
+Every uploaded event feeds [fleet prevalence](../prevalence/README.md). Events are kept only when
+the [telemetry archive](../datalake/README.md) is on; otherwise they are counted and dropped.
+Agents that stop sending heartbeats are detected by the `detect-silent-agents` scheduled job.
+
+A detection's first triggering event is stored in `Detection.event`; the other events and the
+structured fields (score, attributions, techniques) are kept in `Detection.meta`. The agent's own
+case identifier is kept there too, but cases are formed server-side.
+
+Code: `app/api/ingest/`, `lib/agent-auth.ts`, `lib/detection-payload.ts`, `lib/health-beacon.ts`.
+Tests: `tests/integration/ingest.test.ts`, `event-ingest.test.ts`, `decoy-tokens.test.ts`.

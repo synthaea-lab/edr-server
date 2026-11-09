@@ -1,18 +1,20 @@
-# server/disruption — Attack Disruption
+# Attack disruption
 
-Automated, case-level containment: when a case crosses a confidence threshold and
-policy allows, the control plane executes a disruption playbook scoped to the case —
-not a human-speed reaction to a single alert.
+**Status: planned.** Nothing in this area is built yet.
 
-Planned actions (each gated by policy, fully audited, reversible where possible):
-- **Isolate device** — network isolation executed by the agent's `response` crate
-  (allow only control-plane traffic), triggered fleet-side for every host in the case
-- **Suspend user** — disable/step-up the implicated identity via directory connectors
-  (Entra ID / AD / Okta), server-side
-- **Block indicators** — push the case's IOCs (hashes, domains, IPs) to the fleet via
-  `intel` sets and to boundary controls via the export module
-- **Quarantine artifacts** — case-wide quarantine of dropped files via `response`
+Automated, case-level containment: when a case crosses a confidence threshold and policy allows,
+the control plane runs a disruption playbook scoped to the case, at machine speed rather than as a
+human reaction to a single alert.
 
-Design rule: disruption composes actions that already exist agent-side; this module
-owns the *decision* (case threshold + policy) and the *orchestration* (fan-out,
-rollback, audit), never new endpoint capability.
+Planned actions, each gated by policy, audited and reversible where possible:
+
+- **Isolate device.** Network isolation carried out by the agent (only control-plane traffic
+  allowed), for every host in the case.
+- **Suspend user.** Disable or step up the implicated identity through directory connectors such
+  as Entra ID, Active Directory or Okta.
+- **Block indicators.** Push the case's hashes, domains and addresses to the fleet as IOC sets.
+- **Quarantine artifacts.** Case-wide quarantine of dropped files by the agent.
+
+Design rule: disruption composes response actions the agent already has. This module owns the
+decision (case threshold and policy) and the orchestration (fan-out, rollback, audit), never a new
+endpoint capability.

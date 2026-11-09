@@ -1,61 +1,135 @@
-# server — Control Plane
+# Synthaea Server
 
-Part of Synthaea, alongside the public synthaea-lab/agent, synthaea-lab/ml and
-synthaea-lab/rules repositories. Contract tests that read sibling repos (`agent`, `ml`,
-`rules`) resolve them through `tests/helpers/siblings.ts`: check them out next to this repo
-as `agent/`, `ml/` and `rules/` (this one as `server/`), or point `SYNTHAEA_ROOT` at their
-parent. Present → they run, absent →
-they skip with a notice (`SYNTHAEA_REQUIRE_SIBLINGS=1` turns that into a failure, as CI
-does). Setup and local runs: `README-SETUP.md`.
+The self-hosted control plane of [Synthaea](https://www.synthaea.com), an open-source EDR/XDR for
+Linux, Windows and macOS. Agents connect to it over mutual TLS and upload their detections,
+telemetry and health. Analysts triage cases in a web console. Operators roll detection content
+and agent releases out to the fleet by rings.
 
-One modern Next.js (App Router, TypeScript) + PostgreSQL application (ADR-0001). Authentication and
-tenancy build on better-auth (ADR-0003):
-organization = tenant, RBAC on member roles, tenant id first-class from the first
-migration; agent identity stays the mTLS enrollment PKI — the two never mix.
+The agent detects on the device and keeps working without a control plane. The server adds what
+needs the whole fleet in view: cases across hosts, prevalence, hunting over history, and rollout
+control. There is no Synthaea cloud: you run the server yourself.
 
-| Path | Purpose |
+> [!WARNING]
+> **Status: alpha.** The server runs as a development stack with Docker Compose. It is not
+> hardened for production, and its API and database schema change without a migration path. Run
+> it on a lab network and do not expose it to the internet.
+
+## Features
+
+Built today:
+
+- **Agent ingest.** mTLS endpoints for event batches, detections and heartbeats. Agents register
+  the decoy credentials they plant, and any request that presents one raises an alarm. An agent
+  that stops sending heartbeats opens a case.
+- **Cases.** Detections are grouped into cases per host and joined into fleet cases when hosts
+  share a file hash or a signed-in identity. The case page shows the fleet prevalence of what
+  each detection touched and an optional narrative written by an LLM over the case's evidence
+  (any OpenAI-compatible endpoint; a local Ollama by default). The API also returns a case's
+  entity graph and pivots from a file or domain to every host that showed it.
+- **Fleet prevalence.** First-seen, last-seen and host counts for file hashes, image paths,
+  parent-child pairs and domains, fed by every uploaded event.
+- **Hunting.** Saved and scheduled hunts over detections, search over cases and the telemetry
+  archive, and draft Sigma rules or IOC sets built from a hunt's matches.
+- **Content and releases.** Signed content manifests and agent releases served per ring, with
+  halt and rollback from the console, and IOC feeds imported from CSV, MISP and STIX.
+- **Telemetry archive.** An optional Parquet archive on a local directory or an S3-compatible
+  bucket, with per-tenant retention and an audit row for every deletion.
+- **Notifications.** Signed HTTPS webhooks for host health changes and new hunt matches.
+- **Multi-tenancy.** Every record belongs to a tenant; console users authenticate with
+  [better-auth](https://www.better-auth.com) and act through their role in the tenant.
+
+Planned: a DFIR workbench, case-level attack disruption, cloud-side and retrospective detection,
+ticketing and paging integrations, and SIEM forwarding. The [module notes](#documentation)
+describe each area and what is built.
+
+## Architecture
+
+```text
+ agents ──mTLS──▶ nginx :8443 ──▶ Next.js app ──▶ PostgreSQL
+                  (verifies the     (ingest, API,   (system of record)
+                   client cert)      console)  └──▶ telemetry archive (optional:
+                                                     directory or S3 bucket)
+```
+
+One Next.js application (App Router, TypeScript) serves the agent endpoints, the management API
+and the console. nginx terminates the agents' mTLS and passes the verified certificate subject to
+the application, which identifies an agent by its certificate's common name. Console sessions and
+agent identity are separate: users sign in with better-auth, agents authenticate only with their
+enrollment certificate.
+
+## Quick start
+
+Requirements: Docker with Compose v2, Git, OpenSSL and a Bash shell. On Windows, run the commands
+in WSL.
+
+```bash
+git clone https://github.com/synthaea-lab/server.git
+cd server
+./scripts/generate-dev-certs.sh
+docker compose up --build
+```
+
+This starts PostgreSQL, the application and the mTLS proxy, which listens on port 8443. The
+certificate script writes a development CA, the proxy's certificate and a test agent certificate
+(`CN=agent-test-001`) to `certs/`. Check the stack from another terminal:
+
+```bash
+curl --cacert certs/ca.crt https://localhost:8443/api/health
+```
+
+[README-SETUP.md](README-SETUP.md) continues from here: opening the console, creating the first
+account and tenant, enrolling an agent, reaching the stack from a lab VM, and every configuration
+variable.
+
+To connect an agent, follow
+[Standalone or with a control plane](https://www.synthaea.com/en/docs/standalone-and-control-plane)
+in the documentation.
+
+## Documentation
+
+- [Project documentation](https://www.synthaea.com/en/docs): installing and configuring the agent and
+  the control plane.
+- [README-SETUP.md](README-SETUP.md): the development stack, first sign-in, enrollment and
+  configuration reference.
+- [CONTRIBUTING.md](CONTRIBUTING.md): building, testing and submitting changes.
+- Module notes, one per functional area. The code itself lives in `app/`, `lib/` and `prisma/`.
+
+  | Area | Notes |
+  | --- | --- |
+  | Agent ingest | [ingest/](ingest/README.md) |
+  | Fleet operations and rollout | [ops/](ops/README.md) |
+  | Telemetry archive | [datalake/](datalake/README.md) |
+  | Fleet prevalence | [prevalence/](prevalence/README.md) |
+  | Entity graph | [graph/](graph/README.md) |
+  | Threat hunting | [hunt/](hunt/README.md) |
+  | Cross-host correlation | [fleet/](fleet/README.md) |
+  | Analyst assistant | [assistant/](assistant/README.md) |
+  | Notifications and integrations | [integrations/](integrations/README.md) |
+  | Cloud-side detection (planned) | [cloud-detection/](cloud-detection/README.md) |
+  | DFIR workbench (planned) | [forensics/](forensics/README.md) |
+  | Attack disruption (planned) | [disruption/](disruption/README.md) |
+
+## Related repositories
+
+| Repository | Relation to the server |
 | --- | --- |
-| `ingest/` | Agent-facing endpoints — event/detection upload, heartbeats; mTLS terminated in front (proxy/sidecar) |
-| `api/` | Management API — enrollment/PKI, policy distribution, fleet inventory, case queries, audit log |
-| `console/` | Analyst console — case-centric triage UI, fleet health, content/model distribution |
-| `ops/` | Fleet operations — agent health, observable-loss counters, ring rollout (halt and roll back from `/console/ops` for an owner or admin), ingest health |
-| `integrations/` | SOAR/ticketing/paging — bidirectional case workflow (Jira, ServiceNow, PagerDuty, webhooks) |
-| `datalake/` | Telemetry lake — full-fidelity raw events, columnar/partitioned; substrate for cloud detection, hunting, graph/prevalence rebuilds, ML corpora |
-| `cloud-detection/` | Cloud-based detection: streaming on ingest, scheduled sweeps, and retrospective replay of new content over history |
-| `hunt/` | Threat hunting — saved/scheduled hunts over fleet telemetry, graduation into detection content |
-| `fleet/` | Cross-machine case correlation + adaptive posture (a detection on one host raises the alertness of related hosts) |
-| `graph/` | Entity graph — fleet-wide entities/relations projection backing cases, fleet correlation, hunting, prevalence |
-| `prevalence/` | Reputation/prevalence (Layer 5): fleet first-seen/rarity counters feeding detection and triage |
-| `forensics/` | DFIR workbench — triage acquisitions (via live-response), case timeline, artifact parsing, chain of custody |
-| `assistant/` | Analyst AI assistant — grounded narratives/navigation over cases and the graph; never scores |
-| `disruption/` | Attack disruption — case-level playbooks: isolate device, suspend user, block indicators |
-| (planned) `export/` | SIEM forwarding — vendor connectors (Splunk HEC, Sentinel, Elastic) shipping cases/detections fleet-wide; agents only ever emit neutral formats via `sinks` |
+| [agent](https://github.com/synthaea-lab/agent) | The endpoint agent that enrolls with and reports to the server |
+| [rules](https://github.com/synthaea-lab/rules) | Detection content the server distributes to the fleet |
+| [ml](https://github.com/synthaea-lab/ml) | The ML pipeline; the server's contract tests read its common-set snapshot fixture |
+| [scenarios](https://github.com/synthaea-lab/scenarios) | Benign attack scenarios that validate detection end to end |
 
-All three are facets of the single Next.js app until scale forces a split (the ADR
-records the escape hatch). Postgres schema and migrations live here once scaffolded.
+## Contributing
 
-## Console authentication (#810)
+Contributions are welcome. Read [CONTRIBUTING.md](CONTRIBUTING.md) for the development setup and
+test suites. Every commit carries a [Developer Certificate of Origin](https://developercertificate.org/)
+sign-off (`git commit -s`); there is no CLA.
 
-better-auth reads and writes its tables (`auth_user`, `auth_session`, `auth_account`,
-`auth_verification`, `auth_organization`, `auth_member`, `auth_invitation`) through the Prisma
-client (`prismaAdapter` in `lib/auth.ts`), so `prisma db push` creates them with the rest of the
-schema. Two constraints follow, both found by running a real login:
+## Security
 
-- **`middleware.ts` must not import `@/lib/auth`.** It runs in Next's Edge runtime, where Prisma
-  cannot run; it asks the Node route `/api/auth/get-session` over the loopback
-  (`lib/session-lookup.ts`, which fails closed). Server components and route handlers run on Node
-  and call `auth.api.getSession({ headers: await headers() })`; better-auth refuses a call without
-  the headers.
-- **A session's `activeOrganizationId` is the tenant id**, so an organization's id must equal its
-  tenant's. `lib/tenant-provisioning.ts`'s `provisionTenant` creates the pair (#821), called from
-  `POST /api/admin/tenants` with `{ name }`; the caller becomes the tenant's owning member. The
-  route is gated by `PLATFORM_OPERATOR_USER_IDS` (`lib/platform-operator.ts`), a comma-separated
-  allow-list of `auth_user.id` values, not a session role — the caller has no tenant yet at this
-  point, so a role *within* a tenant (`requireTenantAdmin`, #803) cannot gate it. To sign in
-  against the new tenant afterward, call better-auth's own `POST /api/auth/organization/set-active`
-  with `{ organizationId: <the returned tenant id> }`. Organization deletion is disabled
-  (`disableOrganizationDeletion` in `lib/auth.ts`): better-auth's own delete API has no notion of
-  the Tenant/Organization pairing and would orphan the Tenant row.
+Do not report vulnerabilities in public issues. Use GitHub private vulnerability reporting on this
+repository (*Security*, then *Report a vulnerability*) and see the
+[security policy](https://github.com/synthaea-lab/.github/blob/main/SECURITY.md).
 
-A better-auth upgrade can add fields to its tables: `tests/integration/console-auth.test.ts` fails
-if a required one is missing from `prisma/schema.prisma`.
+## License
+
+Apache License 2.0. See [LICENSE](LICENSE) and [NOTICE](NOTICE).
