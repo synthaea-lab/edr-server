@@ -66,4 +66,36 @@ describe("GET /api/cron/detect-silent-agents", () => {
     expect((await res.json()).casesCreated).toBe(1);
     expect(await prisma.case.count({ where: { tenantId: tenant.id } })).toBe(2);
   });
+
+  it("keeps each tenant's cases apart", async () => {
+    const a = await createTestTenant();
+    const b = await createTestTenant();
+    await createTestAgent(a.id, "enroll-a", { hostname: "web-01", lastSeen: HOUR_AGO() });
+    await createTestAgent(b.id, "enroll-b", { hostname: "web-01", lastSeen: HOUR_AGO() });
+
+    expect((await (await GET(cronRequest())).json()).casesCreated).toBe(2);
+    expect((await (await GET(cronRequest())).json()).casesCreated).toBe(0);
+    expect(await prisma.case.count({ where: { tenantId: a.id } })).toBe(1);
+    expect(await prisma.case.count({ where: { tenantId: b.id } })).toBe(1);
+  });
+
+  it("opens no case while any open case has the agent id in its title (current behavior)", async () => {
+    const tenant = await createTestTenant();
+    const agent = await createTestAgent(tenant.id, "enroll-named", { hostname: "web-01", lastSeen: HOUR_AGO() });
+    await prisma.case.create({
+      data: { tenantId: tenant.id, title: `Lateral movement from ${agent.id}`, severity: "low", status: "open" },
+    });
+
+    expect((await (await GET(cronRequest())).json()).casesCreated).toBe(0);
+  });
+
+  it("counts the open case of enr-10 as the case of enr-1 (current behavior: substring match)", async () => {
+    const tenant = await createTestTenant();
+    await createTestAgent(tenant.id, "enr-10", { hostname: "web-10", lastSeen: HOUR_AGO() });
+    const enr1 = await createTestAgent(tenant.id, "enr-1", { hostname: "web-01", lastSeen: new Date() });
+    expect((await (await GET(cronRequest())).json()).casesCreated).toBe(1); // enr-10's
+
+    await prisma.agent.update({ where: { id: enr1.id }, data: { lastSeen: HOUR_AGO() } });
+    expect((await (await GET(cronRequest())).json()).casesCreated).toBe(0);
+  });
 });

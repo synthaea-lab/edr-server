@@ -1,6 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { verifyCronRequest } from "@/lib/cron-auth";
 import { prisma } from "@/lib/prisma";
+import {
+  caseNamesAgent,
+  findOpenCasesNamingAgents,
+  silentCaseDescription,
+  silentCaseTitle,
+} from "@/lib/silent-agent-case";
 
 const SILENCE_THRESHOLD_MS = 5 * 60 * 1000; // 5 minutes
 
@@ -21,34 +27,30 @@ export async function GET(req: NextRequest) {
       include: { tenant: true },
     });
 
+    const byTenant = new Map<string, typeof silentAgents>();
+    for (const agent of silentAgents) {
+      byTenant.set(agent.tenantId, [...(byTenant.get(agent.tenantId) ?? []), agent]);
+    }
+
     let casesCreated = 0;
 
-    // Create cases for silent agents
-    for (const agent of silentAgents) {
-      // Check if we already have an open case for this agent. The title carries the host
-      // name when there is one, so it cannot be searched by id (#901): the description
-      // always ends with the enrollment id, which is unique per agent.
-      const existingCase = await prisma.case.findFirst({
-        where: {
-          tenantId: agent.tenantId,
-          status: "open",
-          OR: [
-            { title: { contains: agent.id } },
-            { description: { contains: `Enrollment ID: ${agent.enrollmentId}` } },
-          ],
-        },
-      });
-
-      if (!existingCase) {
-        await prisma.case.create({
+    // Open one case per silent agent that no open case names yet. A case opened in this run
+    // joins the list, so the agents after it are checked against it as well.
+    for (const [tenantId, agents] of Array.from(byTenant.entries())) {
+      const open = await findOpenCasesNamingAgents(prisma, tenantId, agents);
+      for (const agent of agents) {
+        if (open.some((c) => caseNamesAgent(c, agent))) continue;
+        const created = await prisma.case.create({
           data: {
-            tenantId: agent.tenantId,
-            title: `Agent Silent: ${agent.hostname || agent.id}`,
-            description: `Agent has not sent heartbeat for >5 minutes. Last seen: ${agent.lastSeen.toISOString()}. Enrollment ID: ${agent.enrollmentId}`,
+            tenantId,
+            title: silentCaseTitle(agent),
+            description: silentCaseDescription(agent),
             severity: "high",
             status: "open",
           },
+          select: { id: true, title: true, description: true },
         });
+        open.push(created);
         casesCreated++;
       }
     }
