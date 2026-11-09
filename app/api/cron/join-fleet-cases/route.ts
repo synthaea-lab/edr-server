@@ -9,11 +9,14 @@ import {
   outranksOrEqualSeverity,
 } from "@/lib/fleet-case";
 import { loadFleetPrevalence } from "@/lib/fleet-prevalence";
+import { perTenantResponse, runPerTenant } from "@/lib/cron/per-tenant";
 
-/** Fixed key for a transaction-scoped advisory lock, paired with a per-tenant second key, as in
- * cron/group-detections: two overlapping invocations would otherwise both open a case for the
- * same group. Released with the transaction, including on a crash. */
+/** Fixed first key of this cron's per-tenant advisory lock (`lib/cron/per-tenant.ts`): two
+ * overlapping invocations would otherwise both open a case for the same group. */
 const JOIN_LOCK_KEY = 62_262_001;
+
+/** Names this cron in its log lines. */
+const JOIN_LABEL = "Fleet case join";
 
 /** How far back detections are read: the join window is a day, so a week leaves room for a late
  * detection to join an older sighting without the sweep reading the whole table. */
@@ -23,15 +26,12 @@ const JOIN_LOOKBACK_MS = 7 * 24 * 60 * 60 * 1000;
  * `GROUPING_BATCH_SIZE`: a bounded transaction, and the next tick continues). */
 const JOIN_BATCH_SIZE = 5000;
 
-type TenantJoinResult =
-  | { skipped: true }
-  | {
-      skipped: false;
-      fleetCasesCreated: number;
-      fleetCasesMerged: number;
-      detectionsJoined: number;
-      moreWorkLikely: boolean;
-    };
+interface TenantJoinResult {
+  fleetCasesCreated: number;
+  fleetCasesMerged: number;
+  detectionsJoined: number;
+  moreWorkLikely: boolean;
+}
 
 /**
  * GET /api/cron/join-fleet-cases
@@ -45,57 +45,22 @@ type TenantJoinResult =
  * `Detection.fleetCaseId`; a detection's own host case is untouched.
  *
  * One transaction per tenant, with its own advisory lock, so one tenant's failure or slowness does
- * not stop the others (see cron/group-detections). Authentication: Bearer token (CRON_SECRET).
- * Status: 200, 207 when some tenants failed, 502 when every one did.
+ * not stop the others (`runPerTenant`). Authentication: Bearer token (CRON_SECRET).
+ * Status: 200, 207 when some tenants failed, 502 when every one did (`perTenantResponse`).
  */
 export async function GET(req: NextRequest) {
   try {
     const denied = await verifyCronRequest(req);
     if (denied) return denied;
 
-    const tenants = await prisma.tenant.findMany({ select: { id: true } });
-    let tenantsSkipped = 0;
-    let tenantsFailed = 0;
-    let fleetCasesCreated = 0;
-    let fleetCasesMerged = 0;
-    let detectionsJoined = 0;
-    let moreWorkLikely = false;
-
-    for (const tenant of tenants) {
-      try {
-        const result = await prisma.$transaction((tx) => joinOneTenant(tx, tenant.id), { timeout: 30_000 });
-        if (result.skipped) {
-          tenantsSkipped++;
-          continue;
-        }
-        fleetCasesCreated += result.fleetCasesCreated;
-        fleetCasesMerged += result.fleetCasesMerged;
-        detectionsJoined += result.detectionsJoined;
-        moreWorkLikely = moreWorkLikely || result.moreWorkLikely;
-      } catch (error) {
-        console.error(`Fleet case join error for tenant ${tenant.id}:`, error);
-        tenantsFailed++;
-      }
-    }
-
-    const body = {
-      tenantsChecked: tenants.length,
-      tenantsSkipped,
-      tenantsFailed,
-      fleetCasesCreated,
-      fleetCasesMerged,
-      detectionsJoined,
-      moreWorkLikely,
-    };
-    if (tenants.length > 0 && tenantsFailed === tenants.length) {
-      console.error(`Fleet case join: every tenant failed (${tenantsFailed}/${tenants.length})`);
-      return NextResponse.json({ ...body, error: "All tenants failed" }, { status: 502 });
-    }
-    if (tenantsFailed > 0) {
-      console.error(`Fleet case join: ${tenantsFailed}/${tenants.length} tenants failed`);
-      return NextResponse.json({ ...body, error: "Some tenants failed" }, { status: 207 });
-    }
-    return NextResponse.json(body);
+    const summary = await runPerTenant(prisma, { lockKey: JOIN_LOCK_KEY, label: JOIN_LABEL }, joinOneTenant);
+    const { results } = summary;
+    return perTenantResponse(JOIN_LABEL, summary, {
+      fleetCasesCreated: results.reduce((n, r) => n + r.fleetCasesCreated, 0),
+      fleetCasesMerged: results.reduce((n, r) => n + r.fleetCasesMerged, 0),
+      detectionsJoined: results.reduce((n, r) => n + r.detectionsJoined, 0),
+      moreWorkLikely: results.some((r) => r.moreWorkLikely),
+    });
   } catch (error) {
     console.error("Fleet case join error:", error);
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });
@@ -103,12 +68,6 @@ export async function GET(req: NextRequest) {
 }
 
 async function joinOneTenant(tx: Prisma.TransactionClient, tenantId: string): Promise<TenantJoinResult> {
-  // Explicit ::int cast: see cron/group-detections for why a bare number does not bind.
-  const lockRows = await tx.$queryRaw<{ locked: boolean }[]>`
-    SELECT pg_try_advisory_xact_lock(${JOIN_LOCK_KEY}::int, hashtext(${tenantId})) AS locked
-  `;
-  if (!lockRows[0]?.locked) return { skipped: true };
-
   const detections = await tx.detection.findMany({
     where: { tenantId, timestamp: { gte: new Date(Date.now() - JOIN_LOOKBACK_MS) } },
     select: { id: true, agentId: true, timestamp: true, severity: true, event: true, fleetCaseId: true },
@@ -128,7 +87,7 @@ async function joinOneTenant(tx: Prisma.TransactionClient, tenantId: string): Pr
     fleetCasesMerged += outcome.merged;
     detectionsJoined += outcome.detectionsJoined;
   }
-  return { skipped: false, fleetCasesCreated, fleetCasesMerged, detectionsJoined, moreWorkLikely };
+  return { fleetCasesCreated, fleetCasesMerged, detectionsJoined, moreWorkLikely };
 }
 
 async function upsertGroup(tx: Prisma.TransactionClient, tenantId: string, group: FleetGroup) {
