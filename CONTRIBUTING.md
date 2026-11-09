@@ -50,8 +50,8 @@ DATABASE_URL="postgresql://synthaea:synthaea_test@localhost:5433/synthaea_test" 
 npm run test:integration
 ```
 
-`scripts/run-tests.sh` does all of this in one go. [tests/README.md](tests/README.md) explains the
-suites, the contract tests that read the sibling repositories, and the helpers.
+[tests/README.md](tests/README.md) explains the suites, the contract tests that read the sibling
+repositories, and the helpers.
 
 ## Conventions
 
