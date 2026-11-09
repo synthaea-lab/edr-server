@@ -1,14 +1,12 @@
 import { prisma } from "@/lib/prisma";
-import { auth } from "@/lib/auth";
+import { requireConsoleTenant } from "@/lib/console-session";
+import { NoOrganization } from "@/components/NoOrganization";
 import { loadFleet, type FleetAgent } from "@/lib/fleet";
 import { loadRings, type RingStatus, type RolloutState } from "@/lib/rings";
 import { iocFeedSummary, type FleetStatus } from "@/lib/fleet-health";
 import { loadIngestHealth, type AgentIngestHealth } from "@/lib/ingest-stats";
-import { headers } from "next/headers";
-import { redirect } from "next/navigation";
 import RingControls from "@/components/RingControls";
 import { NON_ADMIN_NOTE } from "@/lib/ring-actions";
-import { isAdminRole } from "@/lib/admin-auth";
 
 export const dynamic = "force-dynamic";
 
@@ -27,29 +25,14 @@ const STATUS_LABEL: Record<FleetStatus, string> = {
 };
 
 export default async function FleetHealthPage() {
-  const session = await auth.api.getSession({ headers: await headers() });
-  if (!session) redirect("/login");
-
-  const tenantId = session.session.activeOrganizationId;
-  if (!tenantId) {
-    return (
-      <div className="rounded-lg bg-yellow-50 p-4">
-        <p className="text-sm text-yellow-800">
-          No organization selected. Please contact your administrator.
-        </p>
-      </div>
-    );
-  }
+  // Halt and roll back are admin actions (#803): only an owner or admin sees the buttons; the
+  // routes check the role again.
+  const caller = await requireConsoleTenant({ withRole: true });
+  if ("noOrganization" in caller) return <NoOrganization />;
+  const { tenantId, isAdmin } = caller;
 
   const agents = await loadFleet(prisma, tenantId);
   const { rings, truncated } = await loadRings(prisma, tenantId);
-  // Halt and roll back are admin actions (#803): only an owner or admin sees the buttons; the
-  // routes check the role again.
-  const member = await prisma.member.findFirst({
-    where: { organizationId: tenantId, userId: session.user.id },
-    select: { role: true },
-  });
-  const isAdmin = isAdminRole(member?.role);
   const ingest = await loadIngestHealth(prisma, tenantId, new Date());
 
   return (

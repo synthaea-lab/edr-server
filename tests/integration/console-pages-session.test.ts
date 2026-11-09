@@ -129,6 +129,9 @@ describe("console pages read the session with the request's headers (real databa
       ["hunts/[id]/matches/page", { params: { id: "x" }, searchParams: {} }],
       ["hunts/[id]/edit/page", { params: { id: "x" } }],
       ["cases/[id]/page", { params: { id: "x" } }],
+      ["fleet-cases/page", {}],
+      ["fleet-cases/[id]/page", { params: { id: "x" } }],
+      ["notifications/page", {}],
     ] as const) {
       expect(await render(page, props), page).toContain("No organization selected");
     }
