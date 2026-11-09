@@ -1,4 +1,5 @@
 import { HuntValidationError, type HuntQuery } from "@/lib/hunt";
+import { TECHNIQUE_RE } from "@/lib/hunt-fields";
 
 /**
  * Hunt-to-draft-rule graduation (#618, detection-as-code gap 4).
@@ -36,7 +37,6 @@ export type GraduationResult =
   | { ok: true; files: DraftFile[]; todo: string[] }
   | { ok: false; problems: string[] };
 
-const TECHNIQUE_RE = /^T\d{4}(\.\d{3})?$/;
 const SEVERITY_RANK: Record<string, number> = { low: 0, medium: 1, high: 2, critical: 3 };
 const FIELD_MAX = 2000;
 
