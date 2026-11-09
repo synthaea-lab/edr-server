@@ -106,7 +106,9 @@ jobs:
             chrislusf/seaweedfs:4.50@sha256:b2e51562743be5637381a82eeeee4872eb2f86994b723d25a1bbd171855fe18d \
             server -s3
           for i in $(seq 1 30); do
-            if curl -s -o /dev/null http://127.0.0.1:8333/; then exit 0; fi
+            # Creating a bucket answers 200 only once the S3 gateway takes requests: a bare
+            # connection succeeds earlier, and the first tests then time out on a cold start.
+            if [ "$(curl -s -o /dev/null -w '%{http_code}' -X PUT http://127.0.0.1:8333/readiness-probe)" = "200" ]; then exit 0; fi
             sleep 2
           done
           docker logs lake-s3
