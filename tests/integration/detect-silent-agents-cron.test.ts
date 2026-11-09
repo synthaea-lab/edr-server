@@ -66,4 +66,28 @@ describe("GET /api/cron/detect-silent-agents", () => {
     expect((await res.json()).casesCreated).toBe(1);
     expect(await prisma.case.count({ where: { tenantId: tenant.id } })).toBe(2);
   });
+
+  it("keeps each tenant's and each agent's case apart, even when one enrollment id prefixes another", async () => {
+    const a = await createTestTenant();
+    const b = await createTestTenant();
+    await createTestAgent(a.id, "enr-1", { hostname: "web-01", lastSeen: HOUR_AGO() });
+    await createTestAgent(a.id, "enr-10", { hostname: "web-10", lastSeen: HOUR_AGO() });
+    await createTestAgent(b.id, "enr-2", { hostname: "web-01", lastSeen: HOUR_AGO() });
+
+    // Only enr-10 has an open case: it must not count as enr-1's.
+    await GET(cronRequest());
+    await prisma.case.updateMany({
+      where: { tenantId: a.id, title: "Agent Silent: web-01" },
+      data: { status: "resolved" },
+    });
+    const res = await GET(cronRequest());
+
+    expect((await res.json()).casesCreated).toBe(1);
+    const open = await prisma.case.findMany({ where: { status: "open" }, select: { tenantId: true, title: true } });
+    expect(open.map((c) => `${c.tenantId === a.id ? "a" : "b"} ${c.title}`).sort()).toEqual([
+      "a Agent Silent: web-01",
+      "a Agent Silent: web-10",
+      "b Agent Silent: web-01",
+    ]);
+  });
 });
