@@ -1,4 +1,26 @@
 import { Prisma, type PrismaClient } from "@prisma/client";
+import {
+  HuntValidationError,
+  MAX_WINDOW_HOURS,
+  checkedList,
+  expectVersion,
+  lastHoursField,
+  queryRecord,
+  severitiesField,
+  techniquesField,
+  textField,
+  type Severity,
+} from "@/lib/hunt-fields";
+
+export {
+  HuntValidationError,
+  MAX_TECHNIQUES,
+  MAX_TEXT_LENGTH,
+  MAX_WINDOW_HOURS,
+  MIN_TEXT_LENGTH,
+  SEVERITIES,
+  type Severity,
+} from "@/lib/hunt-fields";
 
 /**
  * Saved hunts (issue #61, ADR-0025).
@@ -15,15 +37,6 @@ import { Prisma, type PrismaClient } from "@prisma/client";
  */
 
 export const HUNT_QUERY_VERSION = 1;
-export const SEVERITIES = ["low", "medium", "high", "critical"] as const;
-export type Severity = (typeof SEVERITIES)[number];
-
-/** Longest window a hunt may look back, in hours (90 days). */
-export const MAX_WINDOW_HOURS = 24 * 90;
-/** `text` bounds: a shorter needle matches nearly everything, a longer one is not a hunt. */
-export const MIN_TEXT_LENGTH = 3;
-export const MAX_TEXT_LENGTH = 256;
-export const MAX_TECHNIQUES = 20;
 export const MAX_AGENT_IDS = 50;
 /** Newest matching detection ids a run keeps. */
 export const HUNT_SAMPLE_SIZE = 100;
@@ -56,65 +69,20 @@ export type HuntQuery = {
   text?: string;
 };
 
-export const TECHNIQUE_RE = /^T\d{4}(\.\d{3})?$/;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
-export class HuntValidationError extends Error {}
-
-function fail(message: string): never {
-  throw new HuntValidationError(message);
-}
 
 /** Validates untrusted JSON as a `HuntQuery` and returns it normalized; throws `HuntValidationError`. */
 export function parseHuntQuery(input: unknown): HuntQuery {
-  if (typeof input !== "object" || input === null || Array.isArray(input)) {
-    fail("query must be an object");
-  }
-  const raw = input as Record<string, unknown>;
-  const allowed = new Set(["version", "lastHours", "techniques", "severities", "agentIds", "text"]);
-  for (const key of Object.keys(raw)) {
-    if (!allowed.has(key)) fail(`unknown query field "${key}"`);
-  }
-  if (raw.version !== HUNT_QUERY_VERSION) fail(`query.version must be ${HUNT_QUERY_VERSION}`);
-  const lastHours = raw.lastHours;
-  if (!Number.isInteger(lastHours) || (lastHours as number) < 1 || (lastHours as number) > MAX_WINDOW_HOURS) {
-    fail(`query.lastHours must be an integer from 1 to ${MAX_WINDOW_HOURS}`);
-  }
-  const query: HuntQuery = { version: HUNT_QUERY_VERSION, lastHours: lastHours as number };
-
-  if (raw.techniques !== undefined) {
-    const list = stringList(raw.techniques, "techniques", MAX_TECHNIQUES);
-    for (const t of list) if (!TECHNIQUE_RE.test(t)) fail(`"${t}" is not an ATT&CK technique id (T1059 or T1059.001)`);
-    query.techniques = Array.from(new Set(list));
-  }
-  if (raw.severities !== undefined) {
-    const list = stringList(raw.severities, "severities", SEVERITIES.length);
-    for (const s of list) if (!(SEVERITIES as readonly string[]).includes(s)) fail(`"${s}" is not a severity`);
-    query.severities = Array.from(new Set(list)) as Severity[];
-  }
+  const raw = queryRecord(input, ["version", "lastHours", "techniques", "severities", "agentIds", "text"]);
+  expectVersion(raw.version, HUNT_QUERY_VERSION);
+  const query: HuntQuery = { version: HUNT_QUERY_VERSION, lastHours: lastHoursField(raw.lastHours) };
+  if (raw.techniques !== undefined) query.techniques = techniquesField(raw.techniques);
+  if (raw.severities !== undefined) query.severities = severitiesField(raw.severities);
   if (raw.agentIds !== undefined) {
-    const list = stringList(raw.agentIds, "agentIds", MAX_AGENT_IDS);
-    for (const id of list) if (!UUID_RE.test(id)) fail(`"${id}" is not an agent id`);
-    query.agentIds = Array.from(new Set(list));
+    query.agentIds = checkedList(raw.agentIds, "agentIds", MAX_AGENT_IDS, (id) => UUID_RE.test(id), (id) => `"${id}" is not an agent id`);
   }
-  if (raw.text !== undefined) {
-    if (typeof raw.text !== "string") fail("query.text must be a string");
-    const text = raw.text.trim();
-    if (text.length < MIN_TEXT_LENGTH || text.length > MAX_TEXT_LENGTH) {
-      fail(`query.text must be ${MIN_TEXT_LENGTH} to ${MAX_TEXT_LENGTH} characters`);
-    }
-    query.text = text;
-  }
+  if (raw.text !== undefined) query.text = textField(raw.text);
   return query;
-}
-
-export function stringList(value: unknown, field: string, max: number): string[] {
-  if (!Array.isArray(value) || value.length === 0 || value.length > max) {
-    fail(`query.${field} must be a list of 1 to ${max} strings`);
-  }
-  const list = value as unknown[];
-  for (const item of list) if (typeof item !== "string") fail(`query.${field} must contain only strings`);
-  return list as string[];
 }
 
 /** Escapes `\`, `%` and `_` so `text` is matched literally by `ILIKE ... ESCAPE '\'`. */

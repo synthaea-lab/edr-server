@@ -1,4 +1,4 @@
-import { HuntValidationError, stringList } from "@/lib/hunt";
+import { checkedList, expectKind, expectVersion, fail, queryRecord, windowField } from "@/lib/hunt-fields";
 
 /**
  * The query of the hunt `events` source: the raw event archive (the telemetry lake, issue #77,
@@ -37,27 +37,24 @@ export type EventQuery = {
 const TYPE_RE = /^[a-z][a-z0-9_]{0,63}$/;
 const SHA256_RE = /^[0-9a-f]{64}$/i;
 
-function fail(message: string): never {
-  throw new HuntValidationError(message);
-}
-
 /** Validates untrusted JSON as an `EventQuery` and returns it normalized; throws `HuntValidationError`. */
 export function parseEventQuery(input: unknown): EventQuery {
-  if (typeof input !== "object" || input === null || Array.isArray(input)) fail("query must be an object");
-  const raw = input as Record<string, unknown>;
-  const allowed = new Set(["kind", "version", "lastDays", "types", "where"]);
-  for (const key of Object.keys(raw)) if (!allowed.has(key)) fail(`unknown query field "${key}"`);
-  if (raw.kind !== "events") fail('query.kind must be "events"');
-  if (raw.version !== EVENT_QUERY_VERSION) fail(`query.version must be ${EVENT_QUERY_VERSION}`);
-  const lastDays = raw.lastDays;
-  if (!Number.isInteger(lastDays) || (lastDays as number) < 1 || (lastDays as number) > MAX_EVENT_WINDOW_DAYS) {
-    fail(`query.lastDays must be an integer from 1 to ${MAX_EVENT_WINDOW_DAYS}`);
-  }
-  const query: EventQuery = { kind: "events", version: EVENT_QUERY_VERSION, lastDays: lastDays as number };
+  const raw = queryRecord(input, ["kind", "version", "lastDays", "types", "where"]);
+  expectKind(raw.kind, "events");
+  expectVersion(raw.version, EVENT_QUERY_VERSION);
+  const query: EventQuery = {
+    kind: "events",
+    version: EVENT_QUERY_VERSION,
+    lastDays: windowField(raw.lastDays, "lastDays", MAX_EVENT_WINDOW_DAYS),
+  };
   if (raw.types !== undefined) {
-    const list = stringList(raw.types, "types", MAX_EVENT_TYPES);
-    for (const t of list) if (!TYPE_RE.test(t)) fail(`"${t}" is not an event type (lowercase letters, digits and underscores)`);
-    query.types = Array.from(new Set(list));
+    query.types = checkedList(
+      raw.types,
+      "types",
+      MAX_EVENT_TYPES,
+      (t) => TYPE_RE.test(t),
+      (t) => `"${t}" is not an event type (lowercase letters, digits and underscores)`
+    );
   }
   if (raw.where !== undefined) {
     const where = raw.where;

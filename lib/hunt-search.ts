@@ -2,20 +2,24 @@ import { Prisma, type PrismaClient } from "@prisma/client";
 import {
   HUNT_STATEMENT_TIMEOUT_MS,
   HUNT_TRANSACTION_TIMEOUT_MS,
-  HuntValidationError,
-  MAX_TECHNIQUES,
-  MAX_TEXT_LENGTH,
-  MAX_WINDOW_HOURS,
-  MIN_TEXT_LENGTH,
-  SEVERITIES,
-  TECHNIQUE_RE,
   escapeLike,
   huntConditions,
   parseHuntQuery,
-  stringList,
   type HuntQuery,
-  type Severity,
 } from "@/lib/hunt";
+import {
+  HuntValidationError,
+  enumListField,
+  expectKind,
+  expectVersion,
+  fail,
+  lastHoursField,
+  queryRecord,
+  severitiesField,
+  techniquesField,
+  textField,
+  type Severity,
+} from "@/lib/hunt-fields";
 import { parseEventQuery, type EventQuery } from "@/lib/hunt-events";
 
 /**
@@ -88,46 +92,16 @@ export type SearchPage =
   | { source: "detections"; rows: DetectionRow[]; nextCursor: string | null; total: number | null }
   | { source: "cases"; rows: CaseRow[]; nextCursor: string | null; total: number | null };
 
-function fail(message: string): never {
-  throw new HuntValidationError(message);
-}
-
 /** Validates untrusted JSON as a `CaseQuery` and returns it normalized; throws `HuntValidationError`. */
 export function parseCaseQuery(input: unknown): CaseQuery {
-  if (typeof input !== "object" || input === null || Array.isArray(input)) fail("query must be an object");
-  const raw = input as Record<string, unknown>;
-  const allowed = new Set(["kind", "version", "lastHours", "severities", "statuses", "techniques", "text"]);
-  for (const key of Object.keys(raw)) if (!allowed.has(key)) fail(`unknown query field "${key}"`);
-  if (raw.kind !== "cases") fail('query.kind must be "cases"');
-  if (raw.version !== CASE_QUERY_VERSION) fail(`query.version must be ${CASE_QUERY_VERSION}`);
-  const lastHours = raw.lastHours;
-  if (!Number.isInteger(lastHours) || (lastHours as number) < 1 || (lastHours as number) > MAX_WINDOW_HOURS) {
-    fail(`query.lastHours must be an integer from 1 to ${MAX_WINDOW_HOURS}`);
-  }
-  const query: CaseQuery = { kind: "cases", version: CASE_QUERY_VERSION, lastHours: lastHours as number };
-  if (raw.severities !== undefined) {
-    const list = stringList(raw.severities, "severities", SEVERITIES.length);
-    for (const s of list) if (!(SEVERITIES as readonly string[]).includes(s)) fail(`"${s}" is not a severity`);
-    query.severities = Array.from(new Set(list)) as Severity[];
-  }
-  if (raw.statuses !== undefined) {
-    const list = stringList(raw.statuses, "statuses", CASE_STATUSES.length);
-    for (const s of list) if (!(CASE_STATUSES as readonly string[]).includes(s)) fail(`"${s}" is not a case status`);
-    query.statuses = Array.from(new Set(list)) as CaseStatus[];
-  }
-  if (raw.techniques !== undefined) {
-    const list = stringList(raw.techniques, "techniques", MAX_TECHNIQUES);
-    for (const t of list) if (!TECHNIQUE_RE.test(t)) fail(`"${t}" is not an ATT&CK technique id (T1059 or T1059.001)`);
-    query.techniques = Array.from(new Set(list));
-  }
-  if (raw.text !== undefined) {
-    if (typeof raw.text !== "string") fail("query.text must be a string");
-    const text = raw.text.trim();
-    if (text.length < MIN_TEXT_LENGTH || text.length > MAX_TEXT_LENGTH) {
-      fail(`query.text must be ${MIN_TEXT_LENGTH} to ${MAX_TEXT_LENGTH} characters`);
-    }
-    query.text = text;
-  }
+  const raw = queryRecord(input, ["kind", "version", "lastHours", "severities", "statuses", "techniques", "text"]);
+  expectKind(raw.kind, "cases");
+  expectVersion(raw.version, CASE_QUERY_VERSION);
+  const query: CaseQuery = { kind: "cases", version: CASE_QUERY_VERSION, lastHours: lastHoursField(raw.lastHours) };
+  if (raw.severities !== undefined) query.severities = severitiesField(raw.severities);
+  if (raw.statuses !== undefined) query.statuses = enumListField(raw.statuses, "statuses", CASE_STATUSES, "a case status");
+  if (raw.techniques !== undefined) query.techniques = techniquesField(raw.techniques);
+  if (raw.text !== undefined) query.text = textField(raw.text);
   return query;
 }
 
