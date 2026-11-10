@@ -4,6 +4,7 @@ import { prisma } from "@/lib/prisma";
 import { requireTenantAdmin, requireTenantMember } from "@/lib/admin-auth";
 import { publishRelease } from "@/lib/release-publish";
 import { publishResponse } from "@/lib/http/publish-response";
+import { parseLimit } from "@/lib/http/query";
 
 const CreateReleaseSchema = z.object({
   ring: z.enum(["canary_0", "canary_1", "canary_2", "prod"]),
@@ -62,12 +63,11 @@ export async function GET(req: NextRequest) {
     const { searchParams } = new URL(req.url);
     const ring = searchParams.get("ring");
     const status = searchParams.get("status");
-    const limit = parseInt(searchParams.get("limit") || "50", 10);
 
     const releases = await prisma.binaryRelease.findMany({
       where: { tenantId, ...(ring && { ring }), ...(status && { status }) },
       orderBy: [{ ring: "asc" }, { releaseVersion: "desc" }],
-      take: Math.min(Number.isNaN(limit) ? 50 : limit, 1000),
+      take: parseLimit(searchParams, { fallback: 50, max: 1000 }),
     });
     return NextResponse.json({ releases });
   } catch (error) {

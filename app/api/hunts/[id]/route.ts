@@ -4,6 +4,7 @@ import { prisma } from "@/lib/prisma";
 import { requireTenantMember } from "@/lib/admin-auth";
 import { HuntValidationError, parseHuntQuery, type HuntQuery } from "@/lib/hunt";
 import { parseHuntInput, sameQuery, type HuntInput } from "@/lib/hunt-input";
+import { parseLimit } from "@/lib/http/query";
 
 type Params = { params: { id: string } };
 
@@ -46,13 +47,12 @@ export async function GET(req: NextRequest, { params }: Params) {
     const authed = requireTenantMember(req);
     if ("response" in authed) return authed.response;
     const { tenantId } = authed;
-    const limit = Math.min(Math.max(Number(new URL(req.url).searchParams.get("limit")) || 20, 1), 100);
     const hunt = await prisma.hunt.findFirst({ where: { id: params.id, tenantId } });
     if (!hunt) return NextResponse.json({ error: "Hunt not found" }, { status: 404 });
     const runs = await prisma.huntRun.findMany({
       where: { huntId: hunt.id, tenantId },
       orderBy: { startedAt: "desc" },
-      take: limit,
+      take: parseLimit(new URL(req.url).searchParams, { fallback: 20, max: 100 }),
     });
     return NextResponse.json({ hunt, runs });
   } catch (error) {
