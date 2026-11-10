@@ -7,8 +7,9 @@
  * in the console and the API. Pure and dependency-free: client components import the parsers.
  */
 
-export const SEVERITIES = ["low", "medium", "high", "critical"] as const;
-export type Severity = (typeof SEVERITIES)[number];
+import { SEVERITIES, type Severity } from "@/lib/severity";
+
+export { SEVERITIES, type Severity } from "@/lib/severity";
 
 /** Longest window a hunt may look back, in hours (90 days). */
 export const MAX_WINDOW_HOURS = 24 * 90;

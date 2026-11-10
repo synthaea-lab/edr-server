@@ -1,4 +1,5 @@
 import { extractGraphFacts } from "@/lib/graph";
+import { outranks } from "@/lib/severity";
 
 /**
  * The cross-host join of #62's first box, as pure decision logic over detections already read
@@ -105,14 +106,6 @@ const GENERIC_SID_PATTERN = /^S-1-5-(?:7|18|19|20|21-\d+-\d+-\d+-500)$/;
 
 function isGenericSid(sid: string): boolean {
   return GENERIC_SID_PATTERN.test(sid);
-}
-
-const SEVERITY_RANK: Record<string, number> = { low: 0, medium: 1, high: 2, critical: 3 };
-
-/** True when `candidate` is at least as severe as `current`; unknown severities never outrank a
- * known one (as `lib/case-grouping.ts`). */
-export function outranksOrEqualSeverity(candidate: string, current: string): boolean {
-  return (SEVERITY_RANK[candidate] ?? -1) >= (SEVERITY_RANK[current] ?? -1);
 }
 
 export type JoinKind = "sha256" | "identity";
@@ -263,7 +256,7 @@ export function joinDetections(detections: FleetDetection[], prevalence?: FleetP
       agentIds: Array.from(new Set(members.map((d) => d.agentId))).sort(compare),
       detectionIds: members.map((d) => d.id).sort(compare),
       severity: members.reduce(
-        (top, d) => ((SEVERITY_RANK[d.severity] ?? -1) > (SEVERITY_RANK[top] ?? -1) ? d.severity : top),
+        (top, d) => (outranks(d.severity, top) ? d.severity : top),
         members[0].severity
       ),
       firstAt: new Date(Math.min(...times)),

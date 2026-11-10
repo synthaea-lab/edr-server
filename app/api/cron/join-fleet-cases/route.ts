@@ -6,8 +6,8 @@ import {
   candidateHashes,
   type FleetGroup,
   joinDetections,
-  outranksOrEqualSeverity,
 } from "@/lib/fleet-case";
+import { ranksAtLeast } from "@/lib/severity";
 import { loadFleetPrevalence } from "@/lib/fleet-prevalence";
 import { perTenantResponse, runPerTenant } from "@/lib/cron/per-tenant";
 
@@ -154,7 +154,7 @@ async function upsertGroup(tx: Prisma.TransactionClient, tenantId: string, group
     firstAt: new Date(Math.min(...times)),
     lastAt: new Date(Math.max(...times)),
     severity: members.reduce(
-      (top, m) => (outranksOrEqualSeverity(m.severity, top) ? m.severity : top),
+      (top, m) => (ranksAtLeast(m.severity, top) ? m.severity : top),
       current.severity
     ),
   };
