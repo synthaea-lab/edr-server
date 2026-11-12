@@ -72,13 +72,13 @@ describe("GET /api/cases", () => {
     expect(await res.json()).toEqual({ cases: [] });
   });
 
-  it("answers a non-numeric limit with 500 (current behavior, see SV-016)", async () => {
+  it("answers a non-numeric limit with the default-sized list, not a 500 (SV-016)", async () => {
     const tenant = await createTestTenant();
 
     const res = await casesReq("?limit=abc", createTenantHeaders(tenant.id));
 
-    expect(res.status).toBe(500);
-    expect(await res.json()).toEqual({ error: "Internal server error" });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ cases: [] });
   });
 
   it("answers a caller with no tenant context with 401 (SV-004)", async () => {
@@ -182,13 +182,13 @@ describe("GET /api/rings/[ring]/agents", () => {
     expect(await ids("?limit=1")).toEqual(["e-healthy"]);
   });
 
-  it("answers a non-numeric limit with 500 (current behavior, see SV-016)", async () => {
+  it("answers a non-numeric limit with the default-sized list, not a 500 (SV-016)", async () => {
     const tenant = await createTestTenant();
 
     const res = await ringAgentsReq("prod", "?limit=abc", createTenantHeaders(tenant.id));
 
-    expect(res.status).toBe(500);
-    expect(await res.json()).toEqual({ error: "Internal server error" });
+    expect(res.status).toBe(200);
+    expect((await res.json()).agents).toEqual([]);
   });
 
   it("answers a caller with no tenant context with 401 (SV-004)", async () => {

@@ -2,6 +2,7 @@ import type { Prisma } from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireTenantMember } from "@/lib/admin-auth";
+import { parseLimit } from "@/lib/http/query";
 
 const VALID_RINGS = ["canary_0", "canary_1", "canary_2", "prod"];
 
@@ -35,7 +36,6 @@ export async function GET(
 
     const { searchParams } = new URL(req.url);
     const status = searchParams.get("status");
-    const limit = parseInt(searchParams.get("limit") || "100", 10);
 
     // Build where clause
     const where: Prisma.AgentWhereInput = {
@@ -57,7 +57,7 @@ export async function GET(
     const agents = await prisma.agent.findMany({
       where,
       orderBy: { lastSeen: "desc" },
-      take: Math.min(limit, 1000),
+      take: parseLimit(searchParams, { fallback: 100, max: 1000 }),
       select: {
         id: true,
         enrollmentId: true,

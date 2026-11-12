@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireTenantMember } from "@/lib/admin-auth";
+import { parseLimit } from "@/lib/http/query";
 
 /**
  * GET /api/corpus/versions
@@ -20,7 +21,6 @@ export async function GET(req: NextRequest) {
     const { searchParams } = new URL(req.url);
 
     const status = searchParams.get("status");
-    const limit = parseInt(searchParams.get("limit") || "50", 10);
 
     const versions = await prisma.corpusVersion.findMany({
       where: {
@@ -28,7 +28,7 @@ export async function GET(req: NextRequest) {
         ...(status && { status }),
       },
       orderBy: { version: "desc" },
-      take: Math.min(limit, 1000),
+      take: parseLimit(searchParams, { fallback: 50, max: 1000 }),
       select: {
         id: true,
         version: true,
