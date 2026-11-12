@@ -169,3 +169,13 @@ export type EventArchive = { state: "ready"; reader: LakeReader } | { state: "of
 export function lakeEnabled(env: Record<string, string | undefined> = process.env): boolean {
   return (env.LAKE_DIR ?? "") !== "" || (env.LAKE_S3_BUCKET ?? "") !== "";
 }
+
+/**
+ * Whether a store `get` failed because the object is not there: `ENOENT` on the directory store,
+ * `NoSuchKey` (or a 404) on S3. The compactor deletes inputs it has merged, so a reader that listed
+ * a partition just before can meet a key that is gone; the rows are in the merged file.
+ */
+export function isNotFound(e: unknown): boolean {
+  const err = e as { code?: string; name?: string; $metadata?: { httpStatusCode?: number } } | null;
+  return err?.code === "ENOENT" || err?.name === "NoSuchKey" || err?.name === "NotFound" || err?.$metadata?.httpStatusCode === 404;
+}

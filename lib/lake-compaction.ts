@@ -20,7 +20,14 @@ import { dayOf, encodeParquet, isPastRetention, type LakeRow } from "@/lib/lake-
  * inputs, so a retried merge of the same files rewrites the same file. A reader that lists the partition
  * between the write and the deletes sees the rows twice, for as long as that takes.
  *
+ * A file whose flush still has batches in the queue is not an input: the writer deletes the batches only
+ * after its puts, so a crashed drain that is retried writes the same names again and replaces them, and
+ * a merged copy of those rows would stay beside the rewritten files for good (#1093).
+ *
  * One compaction per partition at a time: a transaction-scoped advisory lock, held while the files move.
+ * Its transaction ends after {@link LOCK_TIMEOUT_MS} but the work does not run on it, so the merge stops
+ * writing past {@link LOCK_BUDGET_MS}. A reader that lists a partition and then meets a deleted input
+ * lists it again and reads the merged file instead (lib/lake-query.ts).
  * Everything is read into memory, so a run takes at most {@link MAX_INPUT_BYTES} of input per partition;
  * what is left waits for the next run.
  */
@@ -95,7 +102,7 @@ export async function compactLake(
   prisma: PrismaClient,
   io: { store: LakeStore; reader: LakeReader },
   now: Date = new Date(),
-  opts: { minFiles?: number; smallBytes?: number; maxInputBytes?: number; maxPartitions?: number } = {}
+  opts: { minFiles?: number; smallBytes?: number; maxInputBytes?: number; maxPartitions?: number; lockBudgetMs?: number } = {}
 ): Promise<CompactionResult> {
   const store = io.store;
   const reader = io.reader;
@@ -103,6 +110,7 @@ export async function compactLake(
   const smallBytes = opts.smallBytes ?? SMALL_FILE_BYTES;
   const maxInputBytes = opts.maxInputBytes ?? MAX_INPUT_BYTES;
   const maxPartitions = opts.maxPartitions ?? MAX_PARTITIONS;
+  const lockBudgetMs = opts.lockBudgetMs ?? LOCK_BUDGET_MS;
   const result: CompactionResult = {
     runId: randomUUID(),
     partitionsCompacted: 0,
@@ -128,11 +136,16 @@ export async function compactLake(
   for (const row of pending) {
     const where = `tenant=${row.tenantId}/date=${row.date}/type=${row.type}`;
     try {
-      await withPartitionLock(prisma, where, async () => {
-        const how = await settle(prisma, store, row);
-        if (how === "compacted") result.finished += 1;
-        else result.abandoned += 1;
-      });
+      await withPartitionLock(
+        prisma,
+        where,
+        async (lock) => {
+          const how = await settle(prisma, store, row, lock);
+          if (how === "compacted") result.finished += 1;
+          else result.abandoned += 1;
+        },
+        lockBudgetMs
+      );
     } catch (e) {
       fail(where, e);
     }
@@ -163,10 +176,18 @@ export async function compactLake(
       if (p.files.filter((f) => f.size < smallBytes).length < minFiles) continue;
       const where = `tenant=${tenant.id}/date=${p.day}/type=${p.type}`;
       try {
-        await withPartitionLock(prisma, where, async () => {
+        await withPartitionLock(prisma, where, async (lock) => {
+          // The retention read at the start of the run may be stale: a tenant whose retention was lowered
+          // meanwhile could have this day recorded as deleted, and a merge would refill the prefix.
+          const current = await prisma.tenant.findUnique({ where: { id: tenant.id }, select: { lakeRetentionDays: true } });
+          if (current === null || !isCompactable(p.day, current.lakeRetentionDays, now)) return;
           // Re-listed under the lock: another run may have merged this partition since the first listing.
           const fresh = (await store.list(`${where}/`)).filter((f) => PARTITION_KEY.test(f.key));
-          const small = fresh.filter((f) => f.size < smallBytes);
+          // A file whose flush still has batches is not final: the writer deletes the batches only after its
+          // puts, so a crashed drain that is retried writes the same names again and replaces them. Merged
+          // away, those rows would be in the merged file and in the rewritten ones for good.
+          const open = await openFlushes(prisma, tenant.id);
+          const small = fresh.filter((f) => f.size < smallBytes && !open.has(flushOf(f.key)));
           if (small.length < minFiles) return;
           let total = 0;
           const inputs: Listed[] = [];
@@ -175,13 +196,13 @@ export async function compactLake(
             inputs.push(f);
             total += f.size;
           }
-          const out = await mergePartition(prisma, store, reader, tenant.id, p.day, p.type, inputs, result.runId, now);
+          const out = await mergePartition(prisma, store, reader, tenant.id, p.day, p.type, inputs, result.runId, now, lock);
           result.partitionsCompacted += 1;
           result.filesMerged += inputs.length;
           result.bytesBefore += total;
           result.bytesAfter += out;
           done += 1;
-        });
+        }, lockBudgetMs);
       } catch (e) {
         fail(where, e);
       }
@@ -190,16 +211,47 @@ export async function compactLake(
   return result;
 }
 
+/** The lock's transaction is rolled back, and the lock released, after this long. */
+const LOCK_TIMEOUT_MS = 300_000;
+/**
+ * The time a merge may hold the lock before it stops writing: the work runs on `prisma`, not on the
+ * lock's transaction, so Prisma ending that transaction at {@link LOCK_TIMEOUT_MS} would not stop it.
+ * The merge calls {@link PartitionLock.assertHeld} before each of its writes (the intent row, the
+ * merged file, the deletes) and gives up past this budget; the rest of the timeout is the margin
+ * for the write that is already running.
+ */
+export const LOCK_BUDGET_MS = 240_000;
+
+type PartitionLock = { assertHeld: () => void };
+
 /** One compaction per partition at a time; the lock is released when the transaction ends. */
-async function withPartitionLock(prisma: PrismaClient, where: string, work: () => Promise<void>): Promise<void> {
+async function withPartitionLock(prisma: PrismaClient, where: string, work: (lock: PartitionLock) => Promise<void>, budgetMs = LOCK_BUDGET_MS): Promise<void> {
   await prisma.$transaction(
     async (tx) => {
-      const lock = await tx.$queryRaw<{ ok: boolean }[]>`SELECT pg_try_advisory_xact_lock(hashtext(${`compact:${where}`})) AS ok`;
+      // Two keys, a class and the partition, so this lock cannot collide with another feature's
+      // single-key `hashtext` lock (notify-channels, content ring).
+      const lock = await tx.$queryRaw<{ ok: boolean }[]>`SELECT pg_try_advisory_xact_lock(hashtext('lake-compaction'), hashtext(${where})) AS ok`;
       if (!lock[0]?.ok) return;
-      await work();
+      const started = Date.now();
+      await work({
+        assertHeld: () => {
+          if (Date.now() - started > budgetMs) throw new Error(`the partition lock has been held for more than ${budgetMs} ms: stopping before it can expire`);
+        },
+      });
     },
-    { timeout: 300_000, maxWait: 10_000 }
+    { timeout: LOCK_TIMEOUT_MS, maxWait: 10_000 }
   );
+}
+
+/** The name of a flush file without `.parquet`: the `flushId` with its dashes removed (lib/lake-writer.ts), or `c-<hash>` for a merged file. */
+function flushOf(key: string): string {
+  return key.slice(key.lastIndexOf("/") + 1).replace(/\.parquet$/, "");
+}
+
+/** The flushes (dashless `flushId`s) that still have a batch in the queue: their files may be rewritten by a retry. */
+async function openFlushes(prisma: PrismaClient, tenantId: string): Promise<Set<string>> {
+  const rows = await prisma.lakeBatch.findMany({ where: { tenantId, flushId: { not: null } }, select: { flushId: true }, distinct: ["flushId"] });
+  return new Set(rows.flatMap((r) => (r.flushId === null ? [] : [r.flushId.replace(/-/g, "")])));
 }
 
 /** Returns the merged file's size. */
@@ -212,7 +264,8 @@ async function mergePartition(
   type: string,
   inputs: Listed[],
   runId: string,
-  now: Date
+  now: Date,
+  lock: PartitionLock
 ): Promise<number> {
   const rows: LakeRow[] = [];
   for (const f of inputs) rows.push(...(await readRows(reader, f.key)));
@@ -224,6 +277,7 @@ async function mergePartition(
 
   const inputKeys = inputs.map((f) => f.key);
   const outputKey = compactedKey(tenantId, day, type, inputKeys);
+  lock.assertHeld();
   // Intent first. If this cannot be written nothing has moved.
   const record = await prisma.lakeCompaction.create({
     data: {
@@ -239,8 +293,9 @@ async function mergePartition(
       startedAt: now,
     },
   });
+  lock.assertHeld();
   await store.put(outputKey, bytes);
-  await settle(prisma, store, record);
+  await settle(prisma, store, record, lock);
   return bytes.byteLength;
 }
 
@@ -252,7 +307,8 @@ async function mergePartition(
 async function settle(
   prisma: PrismaClient,
   store: LakeStore,
-  row: { id: string; tenantId: string; date: string; type: string; outputKey: string; inputKeys: unknown; bytesOut: bigint }
+  row: { id: string; tenantId: string; date: string; type: string; outputKey: string; inputKeys: unknown; bytesOut: bigint },
+  lock: PartitionLock
 ): Promise<"compacted" | "abandoned"> {
   const where = `tenant=${row.tenantId}/date=${row.date}/type=${row.type}`;
   const listed = await store.list(`${where}/`);
@@ -260,6 +316,9 @@ async function settle(
   const inputKeys = (Array.isArray(row.inputKeys) ? row.inputKeys : []).filter((k): k is string => typeof k === "string");
 
   if (present.get(row.outputKey) !== Number(row.bytesOut)) {
+    // A merged file that is there at another size is not final, and its name belongs to the compactor:
+    // left in place its rows would be read twice for good, and under 8 MiB the next run would take it as an input.
+    if (present.has(row.outputKey)) await store.delete([row.outputKey]);
     await prisma.lakeCompaction.update({
       where: { id: row.id },
       data: { completedAt: new Date(), finishedHow: "abandoned", deletedCount: 0, error: "the merged file is not in the store" },
@@ -268,6 +327,7 @@ async function settle(
   }
   // Never the output itself, even if a key list were wrong.
   const toDelete = inputKeys.filter((k) => k !== row.outputKey && present.has(k));
+  lock.assertHeld();
   const res = await store.delete(toDelete);
   if (res.failed.length > 0) {
     await prisma.lakeCompaction.update({ where: { id: row.id }, data: { deletedCount: res.deleted.length, error: `${res.failed[0].key}: ${res.failed[0].error}` } });

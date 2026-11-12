@@ -5,7 +5,7 @@ import { afterAll, afterEach, beforeEach, describe, expect, it } from "vitest";
 import { NextRequest } from "next/server";
 import { cleanDatabase, createTestAgent, createTestTenant, prisma } from "../helpers/db";
 import { FsLakeStore, type DeleteResult, type LakeStore } from "@/lib/lake-store";
-import { drainLakeQueue, enqueueLakeBatch } from "@/lib/lake-writer";
+import { drainLakeQueue, enqueueLakeBatch, encodeParquet, lakeKey, type LakeRow } from "@/lib/lake-writer";
 import { compactLake, compactedKey } from "@/lib/lake-compaction";
 import { queryLake } from "@/lib/lake-query";
 import { pruneLake } from "@/lib/lake-retention";
@@ -194,8 +194,98 @@ describe("lake compaction against Postgres", () => {
 
     await compactLake(prisma, { store: corrupting, reader: store }, NOW, FEW);
 
-    expect(await files(`tenant=${tenant.id}/`)).toEqual(expect.arrayContaining(inputs));
+    // The inputs are all there and the mismatched output is gone: its name belongs to the compactor, and
+    // left in place its rows would be read twice for good.
+    expect(await files(`tenant=${tenant.id}/`)).toEqual(inputs);
     expect((await prisma.lakeCompaction.findFirstOrThrow()).finishedHow).toBe("abandoned");
+  });
+
+  it("leaves out a file whose flush still has batches: a retried drain would write it again", async () => {
+    const { tenant, agent } = await setup();
+    for (let i = 0; i < 3; i++) await flush(tenant.id, agent.id, 2, `f${i}`);
+    // A drain that wrote its file and crashed before deleting its batches: the batch still carries the flushId.
+    const flushId = "0b6f7c1e-3d2a-4c55-9a1e-2f7a5d9c4b10";
+    const at = new Date(NOW.getTime() - 2 * DAY - 3600_000);
+    const row: LakeRow = { agentId: agent.id, at, comm: "bash", path: null, imagePath: "/p/open/0", daddr: null, query: null, sha256: null, event: "open-flush-row" };
+    const openKey = lakeKey(tenant.id, "2026-11-07", "exec", flushId.replace(/-/g, ""));
+    await store.put(openKey, encodeParquet([row]));
+    await prisma.lakeBatch.create({ data: { tenantId: tenant.id, agentId: agent.id, receivedAt: at, events: [], eventCount: 0, flushId } });
+
+    const result = await compactLake(prisma, io(), NOW, FEW);
+
+    expect(result).toMatchObject({ partitionsCompacted: 1, filesMerged: 3, failedPartitions: 0 });
+    const after = await files(`tenant=${tenant.id}/`);
+    expect(after).toContain(openKey);
+    expect(after).toHaveLength(2);
+
+    // Once the writer has deleted its batches the file is final and the next run takes it.
+    await prisma.lakeBatch.deleteMany({ where: { flushId } });
+    const later = await compactLake(prisma, io(), NOW, { minFiles: 2 });
+    expect(later).toMatchObject({ partitionsCompacted: 1, filesMerged: 2, failedPartitions: 0 });
+    expect(await files(`tenant=${tenant.id}/`)).toHaveLength(1);
+  });
+
+  it("a query that listed a partition before a merge reads the merged file, not an error and not twice", async () => {
+    const { tenant, agent } = await setup();
+    for (let i = 0; i < 4; i++) await flush(tenant.id, agent.id, 2, `f${i}`);
+    const before = await rowsOf(tenant.id, "2026-11-01", "2026-11-09");
+    expect(before).toHaveLength(8);
+    const staleListing = await store.list(`tenant=${tenant.id}/date=2026-11-07/`);
+    await compactLake(prisma, io(), NOW, FEW);
+    // The first listing is the one from before the merge (its inputs are deleted now); later ones are live.
+    let first = true;
+    const racing = {
+      get: (k: string, o?: { signal?: AbortSignal }) => store.get(k, o),
+      list: async (prefix: string, o?: { limit?: number; signal?: AbortSignal }) => {
+        if (first && prefix.startsWith(`tenant=${tenant.id}/date=2026-11-07/`)) {
+          first = false;
+          return staleListing;
+        }
+        return store.list(prefix, o);
+      },
+    };
+
+    const res = await queryLake(racing, { tenantId: tenant.id, from: "2026-11-07", to: "2026-11-07", limit: 1000 });
+
+    expect(res.rows.map((r) => r.event).sort()).toEqual(before);
+  });
+
+  it("stops before writing when the partition lock has been held past its budget", async () => {
+    const { tenant, agent } = await setup();
+    for (let i = 0; i < 3; i++) await flush(tenant.id, agent.id, 2, `f${i}`);
+    const inputs = await files(`tenant=${tenant.id}/`);
+
+    const result = await compactLake(prisma, io(), NOW, { ...FEW, lockBudgetMs: -1 });
+
+    expect(result).toMatchObject({ partitionsCompacted: 0, failedPartitions: 1 });
+    expect(result.errors[0]).toContain("partition lock");
+    expect(await files(`tenant=${tenant.id}/`)).toEqual(inputs);
+    expect(await prisma.lakeCompaction.count()).toBe(0);
+  });
+
+  it("re-reads the tenant's retention under the lock: a retention lowered during the run stops the merge", async () => {
+    const { tenant, agent } = await setup(90);
+    for (let i = 0; i < 3; i++) await flush(tenant.id, agent.id, 2, `f${i}`);
+    const inputs = await files(`tenant=${tenant.id}/`);
+    let lowered = false;
+    const lowering: LakeStore = {
+      put: (k, b) => store.put(k, b),
+      delete: (k) => store.delete(k),
+      list: async (p) => {
+        const out = await store.list(p);
+        if (!lowered) {
+          lowered = true;
+          // After the run's first listing and its retention read: 1 day makes 2026-11-07 prunable within a day.
+          await prisma.tenant.update({ where: { id: tenant.id }, data: { lakeRetentionDays: 1 } });
+        }
+        return out;
+      },
+    };
+
+    const result = await compactLake(prisma, { store: lowering, reader: store }, NOW, FEW);
+
+    expect(result).toMatchObject({ partitionsCompacted: 0, failedPartitions: 0 });
+    expect(await files(`tenant=${tenant.id}/`)).toEqual(inputs);
   });
 
   it("a merged partition is still pruned whole by the retention job", async () => {

@@ -40,8 +40,12 @@ substrate planned for [cloud-side detection](../cloud-detection/README.md).
   next run merges it with the compacted one. Each merge writes a `lake_compactions` row first and
   completes it after the inputs are deleted; a run that finds an unfinished row deletes the inputs of
   a merge whose file is in the store, or gives up a merge whose file never landed (nothing is deleted).
-  Between the write and the deletes a search that lists the partition sees those rows twice. The job
-  reads with the writer's credentials. Run it after `write-lake`, daily or less often.
+  A file whose flush still has batches in the queue is left out of a merge (a crashed drain that is
+  retried writes the same names again and would duplicate the rows). Between the write and the deletes
+  a search that lists the partition sees those rows twice, and a search that lists a partition just
+  before the deletes lists it again and reads the merged file instead of failing. The merge holds a
+  per-partition lock for at most 240 s and stops writing past that, and re-reads the tenant's retention
+  under the lock. The job reads with the writer's credentials. Run it after `write-lake`, daily or less often.
 - **Reading.** `queryLake` (`lib/lake-query.ts`) reads one tenant's events over a range of days
   (at most 366) with optional type and exact-match filters, listing one day at a time so history
   outside the range is never touched. Every key read is checked against the tenant, day and type
