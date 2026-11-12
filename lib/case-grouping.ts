@@ -10,6 +10,8 @@
  * id of a "/"-separated compound tag).
  */
 
+import { outranks } from "@/lib/severity";
+
 export const GROUPING_TIME_WINDOW_MS = 30 * 60 * 1000; // 30 minutes
 
 /**
@@ -24,13 +26,6 @@ export const GROUPING_TIME_WINDOW_MS = 30 * 60 * 1000; // 30 minutes
  * backlog drains over several ticks instead of never draining at all.
  */
 export const GROUPING_BATCH_SIZE = 500;
-
-const SEVERITY_RANK: Record<string, number> = {
-  low: 0,
-  medium: 1,
-  high: 2,
-  critical: 3,
-};
 
 /**
  * The MITRE base techniques a `technique` field names: "T1059.001" -> {T1059}.
@@ -79,13 +74,6 @@ export function groupingTechnique(technique: string, listed: unknown): string {
 
 export function withinTimeWindow(a: Date, b: Date, windowMs: number = GROUPING_TIME_WINDOW_MS): boolean {
   return Math.abs(a.getTime() - b.getTime()) <= windowMs;
-}
-
-/** Higher-severity-wins comparison; unknown severities never outrank a known one. */
-export function outranksSeverity(candidate: string, current: string): boolean {
-  const candidateRank = SEVERITY_RANK[candidate] ?? -1;
-  const currentRank = SEVERITY_RANK[current] ?? -1;
-  return candidateRank > currentRank;
 }
 
 /** `meta.techniques` of a detection, if its `meta` is an object at all. */
@@ -192,7 +180,7 @@ function attach(plan: GroupingPlan, target: Candidate, detection: UngroupedDetec
     plan.assignments.set(ref.caseId, ids);
   }
 
-  if (outranksSeverity(detection.severity, target.severity)) {
+  if (outranks(detection.severity, target.severity)) {
     target.severity = detection.severity;
     if ("newCase" in ref) {
       ref.newCase.severity = detection.severity;

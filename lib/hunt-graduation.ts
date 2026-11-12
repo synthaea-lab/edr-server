@@ -1,5 +1,6 @@
 import { HuntValidationError, type HuntQuery } from "@/lib/hunt";
 import { TECHNIQUE_RE } from "@/lib/hunt-fields";
+import { isSeverity, severityRank } from "@/lib/severity";
 
 /**
  * Hunt-to-draft-rule graduation (#618, detection-as-code gap 4).
@@ -37,7 +38,6 @@ export type GraduationResult =
   | { ok: true; files: DraftFile[]; todo: string[] }
   | { ok: false; problems: string[] };
 
-const SEVERITY_RANK: Record<string, number> = { low: 0, medium: 1, high: 2, critical: 3 };
 const FIELD_MAX = 2000;
 
 /** Validates the body of `POST /api/hunts/[id]/graduate`; throws `HuntValidationError`. */
@@ -184,8 +184,8 @@ export function draftRuleFromHunt(
     severities?.length === 1
       ? severities[0]
       : mostFrequent(
-          detections.map((d) => d.severity).filter((s) => s in SEVERITY_RANK),
-          (a, b) => SEVERITY_RANK[b] - SEVERITY_RANK[a]
+          detections.map((d) => d.severity).filter(isSeverity),
+          (a, b) => severityRank(b) - severityRank(a)
         );
   if (!level) problems.push("No matched detection carries a severity (low, medium, high, critical).");
 

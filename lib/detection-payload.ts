@@ -1,6 +1,7 @@
 import { z } from "zod";
+import { SEVERITIES } from "@/lib/severity";
 
-const SeveritySchema = z.enum(["low", "medium", "high", "critical"]);
+const SeveritySchema = z.enum(SEVERITIES);
 
 // The agent-supplied strings below are bounded two ways (#1060), by who controls them.
 // Rule, model and feed identifiers come from content the team ships, so an oversized one is a

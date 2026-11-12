@@ -3,7 +3,6 @@ import {
   baseTechniques,
   groupingTechnique,
   isRelatedTechnique,
-  outranksSeverity,
   withinTimeWindow,
 } from "@/lib/case-grouping";
 
@@ -81,18 +80,5 @@ describe("withinTimeWindow", () => {
     const inside = new Date(t0.getTime() + 29 * 60 * 1000);
     expect(withinTimeWindow(t0, inside)).toBe(true);
     expect(withinTimeWindow(inside, t0)).toBe(true);
-  });
-});
-
-describe("outranksSeverity", () => {
-  it("ranks critical above high above medium above low", () => {
-    expect(outranksSeverity("critical", "high")).toBe(true);
-    expect(outranksSeverity("high", "medium")).toBe(true);
-    expect(outranksSeverity("medium", "low")).toBe(true);
-  });
-
-  it("does not outrank an equal or higher severity", () => {
-    expect(outranksSeverity("medium", "high")).toBe(false);
-    expect(outranksSeverity("high", "high")).toBe(false);
   });
 });
