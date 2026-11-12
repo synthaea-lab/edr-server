@@ -5,6 +5,8 @@ import { loadFleet, type FleetAgent } from "@/lib/fleet";
 import { loadRings, type RingStatus, type RolloutState } from "@/lib/rings";
 import { iocFeedSummary, type FleetStatus } from "@/lib/fleet-health";
 import { loadIngestHealth, type AgentIngestHealth } from "@/lib/ingest-stats";
+import { loadLakeBacklog, type LakeBacklog } from "@/lib/lake-backlog";
+import { lakeEnabled } from "@/lib/lake-store";
 import RingControls from "@/components/RingControls";
 import { NON_ADMIN_NOTE } from "@/lib/ring-actions";
 
@@ -34,6 +36,8 @@ export default async function FleetHealthPage() {
   const agents = await loadFleet(prisma, tenantId);
   const { rings, truncated } = await loadRings(prisma, tenantId);
   const ingest = await loadIngestHealth(prisma, tenantId, new Date());
+  // Only when the archive is on: otherwise nothing is queued and the panel would say nothing true.
+  const lakeBacklog = lakeEnabled() ? await loadLakeBacklog(prisma, tenantId, new Date()) : null;
 
   return (
     <div>
@@ -77,6 +81,7 @@ export default async function FleetHealthPage() {
         </div>
       )}
       <IngestPanel agents={agents} ingest={ingest} />
+      {lakeBacklog && <LakeBacklogPanel backlog={lakeBacklog} />}
     </div>
   );
 }
@@ -247,6 +252,42 @@ function IngestPanel({
       </div>
     </section>
   );
+}
+
+/** Past this age the oldest queued batch is flagged. A display threshold, not measured: the lake's lag was never timed. */
+const LAKE_BACKLOG_STALE_MS = 15 * 60 * 1000;
+
+/**
+ * Telemetry archive queue (issue #4). Shown, not alerted on, like ingest health: the queue has no
+ * bound yet and what happens at one is the owner's decision (ADR-0041).
+ */
+function LakeBacklogPanel({ backlog }: { backlog: LakeBacklog }) {
+  const stale = backlog.oldestAgeMs !== null && backlog.oldestAgeMs >= LAKE_BACKLOG_STALE_MS;
+  return (
+    <section className="mt-8" aria-label="Telemetry archive queue">
+      <h3 className="mb-1 text-lg font-semibold text-gray-900">Telemetry archive queue</h3>
+      <p className="mb-2 text-xs text-gray-600">
+        Events the server accepted and has not written to the archive yet. An agent&apos;s successful
+        upload means queued, not archived. A queue whose oldest batch keeps getting older means the
+        writer is not running or the object store is not taking writes.
+      </p>
+      <div className="rounded-lg border border-gray-200 bg-white px-4 py-3 text-sm text-gray-700">
+        {backlog.batches === 0 ? (
+          "Empty: everything accepted has been written."
+        ) : (
+          <span className={stale ? "font-medium text-orange-800" : undefined}>
+            {backlog.batches} batches, {backlog.events} events queued; the oldest has waited{" "}
+            {minutes(backlog.oldestAgeMs ?? 0)}
+            {stale ? " (the writer may be stuck)" : ""}.
+          </span>
+        )}
+      </div>
+    </section>
+  );
+}
+
+function minutes(ms: number): string {
+  return ms < 60_000 ? `${Math.round(ms / 1000)} s` : `${Math.round(ms / 60_000)} min`;
 }
 
 /** "never" is a fact (no accepted request retained), "—" would read as unknown. */

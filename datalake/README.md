@@ -72,7 +72,8 @@ The development compose file does not include an object store; point `LAKE_S3_*`
 
 - No compaction: every drain writes new small files.
 - No bound on the queue: with the archive on and `write-lake` not scheduled, `lake_batches` grows
-  without limit.
+  without limit. `/console/ops` shows the tenant's queue (batches, events, age of the oldest) while the
+  archive is on, and flags it past 15 minutes; it is shown, not alerted on, and bounds nothing.
 - An event an agent sends twice (a lost `2xx`, then a resend) is stored twice.
 - Ingest parses JSON as double-precision numbers, so integers above 2^53 in typed fields are
   rounded; the `event` column keeps the original text.
