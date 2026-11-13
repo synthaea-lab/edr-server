@@ -786,3 +786,31 @@ model LakeDeletion {
   @@index([tenantId, date])
   @@map("lake_deletions")
 }
+
+// One compaction of a (tenant, day, type) partition (issue #4, ADR-0041 decision 3): many small
+// files merged into one. Written BEFORE the merged file, completed after the inputs are deleted, so
+// a crash between the two leaves a row that the next run finishes (the output is there: delete the
+// inputs) or abandons (the output never landed: the inputs are untouched). No FK to the tenant,
+// like `lake_deletions`: the record outlives the tenant.
+model LakeCompaction {
+  id          String    @id @default(uuid())
+  tenantId    String    @map("tenant_id")
+  date        String
+  type        String
+  runId       String    @map("run_id")
+  // The merged file, and the files it replaces (keys, as listed when the merge started).
+  outputKey   String    @map("output_key")
+  inputKeys   Json      @map("input_keys")
+  rowCount    Int       @map("row_count")
+  bytesIn     BigInt    @map("bytes_in")
+  bytesOut    BigInt    @map("bytes_out")
+  startedAt   DateTime  @map("started_at")
+  // Null until finished: the inputs are deleted (`finishedHow` "compacted") or the merge was given up ("abandoned").
+  completedAt DateTime? @map("completed_at")
+  finishedHow String?   @map("finished_how")
+  deletedCount Int?     @map("deleted_count")
+  error       String?
+
+  @@index([tenantId, date, type, completedAt])
+  @@map("lake_compactions")
+}

@@ -27,7 +27,7 @@
  */
 
 import { parquetReadObjects } from "hyparquet";
-import type { LakeReader } from "@/lib/lake-store";
+import { isNotFound, type LakeReader } from "@/lib/lake-store";
 
 export const MAX_RANGE_DAYS = 366;
 export const MAX_FILES = 2000;
@@ -221,6 +221,44 @@ async function readPartition(
   return rows;
 }
 
+/**
+ * {@link readPartition} for a file the listing returned, following a compaction. The compactor
+ * deletes the inputs it has merged, so a key can be gone between the listing and the read; its rows
+ * are then in the merged file, which the listing may not have had. A vanished file is not an error:
+ * the partition is listed again and the files not yet read (`seen` holds every key this query has
+ * listed or read) are read in its place. A key that vanishes again is skipped.
+ */
+async function readListed(
+  reader: LakeReader,
+  file: PartitionFile,
+  seen: Set<string>,
+  tests: [string, string][],
+  withEvent = true,
+  signal?: AbortSignal
+): Promise<LakeRow[]> {
+  try {
+    return await readPartition(reader, file, tests, withEvent, signal);
+  } catch (e) {
+    if (!isNotFound(e)) throw e;
+  }
+  const self = KEY.exec(file.key);
+  if (self === null) return [];
+  const rows: LakeRow[] = [];
+  signal?.throwIfAborted();
+  for (const { key } of await reader.list(file.key.slice(0, file.key.lastIndexOf("/") + 1), { signal })) {
+    const m = KEY.exec(key);
+    // Same second layer as the listing: this tenant, this day, this type.
+    if (m === null || m[1] !== self[1] || m[2] !== self[2] || m[3] !== self[3] || seen.has(key)) continue;
+    seen.add(key);
+    try {
+      rows.push(...(await readPartition(reader, { key, date: file.date, type: file.type }, tests, withEvent, signal)));
+    } catch (e) {
+      if (!isNotFound(e)) throw e;
+    }
+  }
+  return rows;
+}
+
 export interface LakeScan {
   tenantId: string;
   from: string;
@@ -260,7 +298,8 @@ export async function scanLake(
   const maxFiles = q.maxFiles ?? MAX_SCAN_FILES;
   if (!Number.isInteger(maxFiles) || maxFiles < 1) throw new RangeError("maxFiles must be a positive integer");
   const listed = await listPartitionFiles(reader, q.tenantId, first, last, types, maxFiles);
-  for (const file of listed.files) await onFile(await readPartition(reader, file, []), file);
+  const seen = new Set(listed.files.map((f) => f.key));
+  for (const file of listed.files) await onFile(await readListed(reader, file, seen, []), file);
   return { filesMatched: listed.files.length, filesRead: listed.files.length, filesSkipped: listed.truncated ? 1 : 0, listingTruncated: listed.truncated };
 }
 
@@ -289,6 +328,7 @@ export async function queryLake(reader: LakeReader, q: LakeQuery): Promise<LakeR
   // so the files kept are the ones that order reads first.
   if (newestFirst) files.reverse();
   const toRead = files;
+  const seen = new Set(files.map((f) => f.key));
   const withEvent = q.includeEvent !== false;
   const rows: LakeRow[] = [];
   let truncated = false;
@@ -303,7 +343,7 @@ export async function queryLake(reader: LakeReader, q: LakeQuery): Promise<LakeR
     for (; i < toRead.length && toRead[i].date === date; i++) {
       q.signal?.throwIfAborted();
       filesRead++;
-      day.push(...(await readPartition(reader, toRead[i], tests, withEvent, q.signal)));
+      day.push(...(await readListed(reader, toRead[i], seen, tests, withEvent, q.signal)));
     }
     day.sort((a, b) => (newestFirst ? b.ts.getTime() - a.ts.getTime() : a.ts.getTime() - b.ts.getTime()));
     for (const row of day) {

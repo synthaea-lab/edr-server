@@ -7,6 +7,9 @@ import { lakeStoreFromEnv } from "@/lib/lake-env";
 import type { LakeStore } from "@/lib/lake-store";
 import { drainLakeQueue, enqueueLakeBatch } from "@/lib/lake-writer";
 import { pruneLake } from "@/lib/lake-retention";
+import { compactLake } from "@/lib/lake-compaction";
+import { lakeCompactionIoFromEnv } from "@/lib/lake-env";
+import { queryLake } from "@/lib/lake-query";
 
 /**
  * Against a real S3-compatible server. Skipped unless LAKE_S3_TEST_ENDPOINT is set (for example
@@ -55,6 +58,7 @@ describe.skipIf(!ENDPOINT)("the lake on an S3-compatible server", () => {
     await emptyBucket();
     await cleanDatabase();
     await prisma.lakeDeletion.deleteMany();
+    await prisma.lakeCompaction.deleteMany();
   });
   afterAll(async () => {
     await emptyBucket();
@@ -125,5 +129,32 @@ describe.skipIf(!ENDPOINT)("the lake on an S3-compatible server", () => {
     expect((await store.list(`tenant=${tenant.id}/`)).map((f) => f.key)).toEqual([freshFile.key]);
     const record = await prisma.lakeDeletion.findFirstOrThrow();
     expect(record).toMatchObject({ tenantId: tenant.id, date: "2026-08-30", objectCount: 1, verifiedEmpty: true });
+  });
+
+  it("compacts a closed day on S3: one merged file, the same rows, the inputs deleted", async () => {
+    const io = lakeCompactionIoFromEnv({
+      LAKE_S3_BUCKET: BUCKET,
+      LAKE_S3_ENDPOINT: ENDPOINT,
+      LAKE_S3_ACCESS_KEY_ID: ACCESS,
+      LAKE_S3_SECRET_ACCESS_KEY: SECRET,
+      LAKE_S3_PREFIX: "lake",
+    });
+    if (!io) throw new Error("lake is off");
+    const tenant = await createTestTenant();
+    const agent = await createTestAgent(tenant.id);
+    const day = new Date(NOW.getTime() - 2 * DAY);
+    const ev = (n: number) => ({ type: "exec", meta: { comm: "bash", timestamp_ns: (day.getTime() + n) * 1_000_000 }, image_path: `/p/${n}` });
+    for (let i = 0; i < 3; i++) {
+      await enqueueLakeBatch(prisma, { tenantId: tenant.id, agentId: agent.id, events: [ev(i * 2), ev(i * 2 + 1)], receivedAt: day });
+      await drainLakeQueue(prisma, io.store, { now: day });
+    }
+    expect(await io.store.list(`tenant=${tenant.id}/`)).toHaveLength(3);
+
+    const result = await compactLake(prisma, io, NOW, { minFiles: 3 });
+
+    expect(result).toMatchObject({ partitionsCompacted: 1, filesMerged: 3, failedPartitions: 0 });
+    expect(await io.store.list(`tenant=${tenant.id}/`)).toHaveLength(1);
+    const rows = (await queryLake(io.reader, { tenantId: tenant.id, from: "2026-10-27", to: "2026-10-29" })).rows;
+    expect(rows.map((r) => r.imagePath).sort()).toEqual(["/p/0", "/p/1", "/p/2", "/p/3", "/p/4", "/p/5"]);
   });
 });
